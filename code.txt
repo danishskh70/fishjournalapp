@@ -1,0 +1,1825 @@
+
+============================================================
+FILE: lib/core/api.dart
+============================================================
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class ApiException implements Exception {
+  final int code;
+  final String message;
+  ApiException(this.code, this.message);
+  @override
+  String toString() => message;
+}
+
+class Api {
+  static const base = 'https://fish-journal.onrender.com';
+  static const _s = FlutterSecureStorage();
+  static String? _a, _r;
+  static void Function()? onExpired;
+
+  static Future<bool> hasSession() async {
+    _a = await _s.read(key: 'a');
+    _r = await _s.read(key: 'r');
+    return _a != null;
+  }
+
+  static Future<void> _save(Map m) async {
+    _a = m['access_token'];
+    _r = m['refresh_token'] ?? _r;
+    await _s.write(key: 'a', value: _a);
+    await _s.write(key: 'r', value: _r);
+  }
+
+  static Future<void> login(String u, String p) async =>
+      _save(await req('POST', '/api/v1/auth/login',
+          body: {'username': u, 'password': p}, auth: false));
+  static Future<void> logout() async {
+    try {
+      await req('POST', '/api/v1/auth/logout',
+          body: _r == null ? null : {'refresh_token': _r});
+    } catch (_) {}
+    _a = null;
+    _r = null;
+    await _s.deleteAll();
+  }
+
+  static Future<bool> _refresh() async {
+    if (_r == null) return false;
+    try {
+      await _save(await req('POST', '/api/v1/auth/refresh',
+          body: {'refresh_token': _r}, auth: false));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<dynamic> req(String method, String path,
+      {Map<String, dynamic>? body,
+      Map<String, String>? q,
+      bool auth = true,
+      bool retry = true}) async {
+    final uri = Uri.parse(base + path)
+        .replace(queryParameters: q == null || q.isEmpty ? null : q);
+    final rq = http.Request(method, uri)
+      ..headers['Content-Type'] = 'application/json';
+    if (auth && _a != null) rq.headers['Authorization'] = 'Bearer $_a';
+    if (body != null) rq.body = jsonEncode(body);
+    http.Response r;
+    try {
+      r = await http.Response.fromStream(
+          await rq.send().timeout(const Duration(seconds: 60)));
+    } catch (_) {
+      throw ApiException(
+          0, 'Cannot reach the server. Check your internet and try again.');
+    }
+    if (r.statusCode == 401 && auth) {
+      if (retry && await _refresh()) {
+        return req(method, path, body: body, q: q, retry: false);
+      }
+      onExpired?.call();
+      throw ApiException(401, 'Session expired. Please log in again.');
+    }
+    final data = r.body.isEmpty ? null : jsonDecode(utf8.decode(r.bodyBytes));
+    if (r.statusCode >= 200 && r.statusCode < 300) return data;
+    throw ApiException(r.statusCode, _msg(r.statusCode, data));
+  }
+
+  static String _msg(int c, dynamic d) {
+    if (c >= 500) return 'Server problem. Please try again shortly.';
+    if (d is Map) {
+      final x = d['detail'] ?? d['message'];
+      if (x is String) return x;
+      if (x is List) {
+        return x.map((e) => e is Map ? '${e['msg']}' : '$e').join('\n');
+      }
+    }
+    return {
+          403: 'Not permitted.',
+          404: 'Record not found.',
+          409: 'Already exists / conflict.',
+          422: 'Invalid data.'
+        }[c] ??
+        'Error $c';
+  }
+}
+
+
+============================================================
+FILE: lib/core/ui.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+import 'package:intl/intl.dart';
+import 'api.dart';
+
+const ocean = Color(0xFF0A2E4D),
+    teal = Color(0xFF14B8A6),
+    coral = Color(0xFFFF7A59);
+
+ThemeData appTheme() => ThemeData(
+      useMaterial3: true,
+      colorScheme: ColorScheme.fromSeed(
+          seedColor: ocean, primary: ocean, secondary: teal),
+      scaffoldBackgroundColor: const Color(0xFFF3F6FA),
+      inputDecorationTheme: InputDecorationTheme(
+          filled: true,
+          fillColor: Colors.white,
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 16)),
+      filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(54),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)))),
+    );
+
+dynamic pick(dynamic m, List<String> ks) {
+  if (m is Map) {
+    for (final k in ks) {
+      final v = m[k];
+      if (v != null && v is! Map && v is! List) return v;
+    }
+    for (final v in m.values) {
+      final r = pick(v, ks);
+      if (r != null) return r;
+    }
+  }
+  return null;
+}
+
+List asList(dynamic d) => d is List
+    ? d
+    : (d is Map
+        ? ((d['items'] ??
+            d['data'] ??
+            d['results'] ??
+            d['entries'] ??
+            d['transactions'] ??
+            []) as List)
+        : []);
+String inr(dynamic v) =>
+    '₹${NumberFormat.decimalPattern('en_IN').format(num.tryParse('${v ?? 0}') ?? 0)}';
+String kg(dynamic v) => '${num.tryParse('${v ?? 0}') ?? 0} kg';
+String niceDate(String? s) {
+  final d = DateTime.tryParse(s ?? '');
+  return d == null ? (s ?? '') : DateFormat('d MMM yyyy').format(d);
+}
+
+String label(String k) {
+  final s = k.replaceAll('_', ' ');
+  return s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+}
+
+String isoDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+
+void toast(BuildContext c, String m) => ScaffoldMessenger.of(c).showSnackBar(
+    SnackBar(content: Text(m), behavior: SnackBarBehavior.floating));
+Future<bool> confirm(BuildContext c, String m) async =>
+    await showDialog<bool>(
+        context: c,
+        builder: (_) => AlertDialog(content: Text(m), actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(c, false),
+                  child: const Text('Cancel')),
+              FilledButton(
+                  style:
+                      FilledButton.styleFrom(minimumSize: const Size(100, 44)),
+                  onPressed: () => Navigator.pop(c, true),
+                  child: const Text('Confirm'))
+            ])) ??
+    false;
+Future<T?> sheet<T>(BuildContext c, Widget w) => showModalBottomSheet<T>(
+    context: c,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFFF3F6FA),
+    shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
+    builder: (_) => Padding(
+        padding: EdgeInsets.fromLTRB(
+            20, 20, 20, MediaQuery.of(c).viewInsets.bottom + 20),
+        child: SingleChildScrollView(child: w)));
+
+class Panel extends StatelessWidget {
+  final Widget child;
+  final EdgeInsets pad;
+  final VoidCallback? onTap;
+  const Panel(
+      {super.key,
+      required this.child,
+      this.pad = const EdgeInsets.all(16),
+      this.onTap});
+  @override
+  Widget build(BuildContext c) => Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          elevation: 0.5,
+          shadowColor: Colors.black26,
+          child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: onTap,
+              child: Padding(padding: pad, child: child))));
+}
+
+class Grad extends StatelessWidget {
+  final Widget child;
+  const Grad({super.key, required this.child});
+  @override
+  Widget build(BuildContext c) => Container(
+      padding: const EdgeInsets.all(20),
+      width: double.infinity,
+      decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(24),
+          gradient: const LinearGradient(
+              colors: [ocean, Color(0xFF0E6E7E)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight),
+          boxShadow: const [
+            BoxShadow(
+                color: Color(0x330A2E4D), blurRadius: 18, offset: Offset(0, 8))
+          ]),
+      child: child);
+}
+
+class KV extends StatelessWidget {
+  final Map m;
+  const KV(this.m, {super.key});
+  @override
+  Widget build(BuildContext c) => Column(children: [
+        for (final e in m.entries.where(
+            (e) => e.value != null && e.value is! Map && e.value is! List))
+          Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                Expanded(
+                    child: Text(label(e.key),
+                        style: const TextStyle(color: Colors.black54))),
+                Text('${e.value}',
+                    style: const TextStyle(fontWeight: FontWeight.w600))
+              ]))
+      ]);
+}
+
+class Fut extends StatefulWidget {
+  final Future<dynamic> Function() load;
+  final Widget Function(BuildContext, dynamic, VoidCallback) build;
+  const Fut({super.key, required this.load, required this.build});
+  @override
+  State<Fut> createState() => _FutS();
+}
+
+class _FutS extends State<Fut> {
+  late Future<dynamic> f = widget.load();
+  void re() => setState(() => f = widget.load());
+  @override
+  Widget build(BuildContext c) => FutureBuilder(
+      future: f,
+      builder: (c, s) {
+        if (s.connectionState != ConnectionState.done) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (s.hasError) {
+          return Center(
+              child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.cloud_off,
+                        size: 48, color: Colors.black38),
+                    const SizedBox(height: 12),
+                    Text('${s.error}', textAlign: TextAlign.center),
+                    const SizedBox(height: 12),
+                    FilledButton(onPressed: re, child: const Text('Retry'))
+                  ])));
+        }
+        return widget.build(c, s.data, re);
+      });
+}
+
+Widget numField(TextEditingController c, String l,
+        {void Function(String)? onChanged}) =>
+    TextField(
+        controller: c,
+        onChanged: onChanged,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: InputDecoration(labelText: l));
+Future<List> fetch(String p, {Map<String, String>? q}) async =>
+    asList(await Api.req('GET', p, q: q));
+Widget drop(String l, int? v, List items, void Function(int?) on) =>
+    DropdownButtonFormField<int>(
+        initialValue: items.any((e) => e['id'] == v) ? v : null,
+        decoration: InputDecoration(labelText: l),
+        items: [
+          for (final e in items)
+            DropdownMenuItem<int>(
+                value: e['id'] as int, child: Text('${e['name']}'))
+        ],
+        onChanged: on);
+
+
+============================================================
+FILE: lib/main.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+import 'core/api.dart';
+import 'core/ui.dart';
+import 'screens/auth_home.dart';
+import 'screens/journal.dart';
+import 'screens/accounts.dart';
+import 'screens/more.dart';
+
+void main() => runApp(const App());
+
+class App extends StatefulWidget {
+  const App({super.key});
+  @override
+  State<App> createState() => _AppS();
+}
+
+class _AppS extends State<App> {
+  bool? ok;
+  @override
+  void initState() {
+    super.initState();
+    Api.onExpired = () => setState(() => ok = false);
+    Api.hasSession().then((v) => setState(() => ok = v));
+  }
+
+  @override
+  Widget build(BuildContext c) => MaterialApp(
+      title: 'Fish Journal',
+      debugShowCheckedModeBanner: false,
+      theme: appTheme(),
+      home: ok == null
+          ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+          : ok!
+              ? Shell(onLogout: () async {
+                  await Api.logout();
+                  setState(() => ok = false);
+                })
+              : LoginPage(onDone: () => setState(() => ok = true)));
+}
+
+class Shell extends StatefulWidget {
+  final VoidCallback onLogout;
+  const Shell({super.key, required this.onLogout});
+  @override
+  State<Shell> createState() => _ShellS();
+}
+
+class _ShellS extends State<Shell> {
+  int i = 0;
+  @override
+  Widget build(BuildContext c) {
+    final pages = [
+      HomePage(go: (n) => setState(() => i = n)),
+      JournalPage(date: DateTime.now()),
+      const AccountsPage(),
+      const HistoryPage(),
+      SettingsPage(onLogout: widget.onLogout)
+    ];
+    return Scaffold(
+        body: SafeArea(child: pages[i]),
+        bottomNavigationBar: NavigationBar(
+            selectedIndex: i,
+            onDestinationSelected: (n) => setState(() => i = n),
+            destinations: const [
+              NavigationDestination(
+                  icon: Icon(Icons.home_outlined),
+                  selectedIcon: Icon(Icons.home),
+                  label: 'Home'),
+              NavigationDestination(
+                  icon: Icon(Icons.menu_book_outlined),
+                  selectedIcon: Icon(Icons.menu_book),
+                  label: 'Journal'),
+              NavigationDestination(
+                  icon: Icon(Icons.account_balance_wallet_outlined),
+                  selectedIcon: Icon(Icons.account_balance_wallet),
+                  label: 'Accounts'),
+              NavigationDestination(
+                  icon: Icon(Icons.history), label: 'History'),
+              NavigationDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: 'Settings')
+            ]));
+  }
+}
+
+
+============================================================
+FILE: lib/screens/accounts.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+import '../core/api.dart';
+import '../core/ui.dart';
+import 'journal.dart';
+
+class AccountsPage extends StatelessWidget {
+  const AccountsPage({super.key});
+  @override
+  Widget build(BuildContext c) => DefaultTabController(
+      length: 2,
+      child: Column(children: [
+        const Padding(
+            padding: EdgeInsets.all(16),
+            child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Accounts',
+                    style:
+                        TextStyle(fontSize: 26, fontWeight: FontWeight.w800)))),
+        const TabBar(tabs: [Tab(text: 'Hotels'), Tab(text: 'Suppliers')]),
+        const Expanded(
+            child:
+                TabBarView(children: [_Bal(hotel: true), _Bal(hotel: false)]))
+      ]));
+}
+
+class _Bal extends StatelessWidget {
+  final bool hotel;
+  const _Bal({required this.hotel});
+  @override
+  Widget build(BuildContext c) {
+    final k = hotel ? 'hotels' : 'suppliers';
+    return Scaffold(
+        backgroundColor: Colors.transparent,
+        floatingActionButton: FloatingActionButton.extended(
+            backgroundColor: ocean,
+            foregroundColor: Colors.white,
+            icon: const Icon(Icons.payments),
+            label: Text(hotel ? 'Hotel payment' : 'Pay supplier'),
+            onPressed: () => sheet(c, PaySheet(hotel: hotel))),
+        body: Fut(
+            load: () => fetch('/api/v1/accounts/$k'),
+            build: (c, data, re) {
+              final l = data as List;
+              if (l.isEmpty) {
+                return const Center(child: Text('No accounts yet'));
+              }
+              return RefreshIndicator(
+                  onRefresh: () async => re(),
+                  child: ListView(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+                      children: [
+                        for (final e in l)
+                          Panel(
+                              onTap: () => Navigator.push(
+                                  c,
+                                  MaterialPageRoute(
+                                      builder: (_) => LedgerPage(
+                                          hotel: hotel,
+                                          id: (pick(e, [
+                                            'id',
+                                            '${hotel ? 'hotel' : 'supplier'}_id'
+                                          ])) as int,
+                                          name: '${pick(e, [
+                                                'name',
+                                                '${hotel ? 'hotel' : 'supplier'}_name'
+                                              ])}'))),
+                              child: Row(children: [
+                                CircleAvatar(
+                                    backgroundColor: (hotel ? teal : coral)
+                                        .withValues(alpha: 0.1),
+                                    child: Icon(
+                                        hotel
+                                            ? Icons.hotel
+                                            : Icons.local_shipping,
+                                        color: hotel ? teal : coral)),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                    child: Text(
+                                        '${pick(e, [
+                                              'name',
+                                              '${hotel ? 'hotel' : 'supplier'}_name'
+                                            ])}',
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 16))),
+                                Text(
+                                    inr(pick(e, [
+                                      'outstanding',
+                                      'outstanding_balance',
+                                      'balance',
+                                      'closing_balance'
+                                    ])),
+                                    style: TextStyle(
+                                        fontWeight: FontWeight.w800,
+                                        fontSize: 17,
+                                        color: hotel ? teal : coral))
+                              ]))
+                      ]));
+            }));
+  }
+}
+
+class LedgerPage extends StatefulWidget {
+  final bool hotel;
+  final int id;
+  final String name;
+  const LedgerPage(
+      {super.key, required this.hotel, required this.id, required this.name});
+  @override
+  State<LedgerPage> createState() => _LS();
+}
+
+class _LS extends State<LedgerPage> {
+  DateTimeRange? r;
+  @override
+  Widget build(BuildContext c) => Scaffold(
+      appBar: AppBar(title: Text(widget.name), actions: [
+        IconButton(
+            icon: const Icon(Icons.date_range),
+            onPressed: () async {
+              final x = await showDateRangePicker(
+                  context: c,
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime.now());
+              if (x != null) setState(() => r = x);
+            }),
+        if (r != null)
+          IconButton(
+              icon: const Icon(Icons.clear),
+              onPressed: () => setState(() => r = null))
+      ]),
+      body: Fut(
+          key: ValueKey(r),
+          load: () => Api.req('GET',
+                  '/api/v1/accounts/${widget.hotel ? 'hotels' : 'suppliers'}/${widget.id}/ledger',
+                  q: {
+                    if (r != null) 'from_date': isoDate(r!.start),
+                    if (r != null) 'to_date': isoDate(r!.end)
+                  }),
+          build: (c, d, re) =>
+              ListView(padding: const EdgeInsets.all(16), children: [
+                if (d is Map)
+                  Grad(
+                      child: Column(children: [
+                    for (final k in ['previous_balance', 'closing_balance'])
+                      if (d[k] != null)
+                        Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(label(k),
+                                  style:
+                                      const TextStyle(color: Colors.white70)),
+                              Text(inr(d[k]),
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 18))
+                            ])
+                  ])),
+                const SizedBox(height: 12),
+                for (final e in asList(d))
+                  Panel(
+                      child: Row(children: [
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text(
+                              label('${pick(e, ['entry_type', 'type']) ?? ''}'),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                          Text(
+                              '${niceDate('${pick(e, [
+                                    'date',
+                                    'entry_date'
+                                  ])}')} ${pick(e, ['fish_name']) ?? ''}',
+                              style: const TextStyle(
+                                  color: Colors.black54, fontSize: 12))
+                        ])),
+                    Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(inr(pick(e, ['amount'])),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                          Text(
+                              'Bal ${inr(pick(e, [
+                                    'running_balance',
+                                    'balance'
+                                  ]))}',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Colors.black54))
+                        ])
+                  ]))
+              ])));
+}
+
+class PaySheet extends StatefulWidget {
+  final bool hotel;
+  const PaySheet({super.key, required this.hotel});
+  @override
+  State<PaySheet> createState() => _PS();
+}
+
+class _PS extends State<PaySheet> {
+  List parties = [];
+  int? p;
+  String mode = 'cash';
+  final a = TextEditingController();
+  @override
+  void initState() {
+    super.initState();
+    fetch(widget.hotel ? '/api/v1/hotels' : '/api/v1/suppliers')
+        .then((l) => setState(() => parties = l));
+  }
+
+  Future<void> save() async {
+    if (p == null || n(a.text) <= 0) {
+      toast(context, 'Select party and amount');
+      return;
+    }
+    try {
+      await Api.req('POST',
+          widget.hotel ? '/api/v1/hotel-payments' : '/api/v1/supplier-payments',
+          body: {
+            widget.hotel ? 'hotel_id' : 'supplier_id': p,
+            'amount': n(a.text),
+            'payment_mode': mode
+          });
+      if (mounted) {
+        Navigator.pop(context);
+        toast(context, 'Payment recorded');
+      }
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(
+            widget.hotel
+                ? 'Payment received from hotel'
+                : 'Payment to supplier',
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 14),
+        drop(widget.hotel ? 'Hotel' : 'Supplier', p, parties,
+            (v) => setState(() => p = v)),
+        const SizedBox(height: 12),
+        numField(a, 'Amount (₹)'),
+        const SizedBox(height: 12),
+        SegmentedButton<String>(segments: const [
+          ButtonSegment(
+              value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)),
+          ButtonSegment(
+              value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))
+        ], selected: {
+          mode
+        }, onSelectionChanged: (s) => setState(() => mode = s.first)),
+        const SizedBox(height: 16),
+        FilledButton(onPressed: save, child: const Text('Save payment'))
+      ]);
+}
+
+
+============================================================
+FILE: lib/screens/auth_home.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+
+import '../core/api.dart';
+import '../core/ui.dart';
+import 'accounts.dart';
+
+class LoginPage extends StatefulWidget {
+  final VoidCallback onDone;
+
+  const LoginPage({super.key, required this.onDone});
+
+  @override
+  State<LoginPage> createState() => _LoginS();
+}
+
+class _LoginS extends State<LoginPage> {
+  final u = TextEditingController();
+  final p = TextEditingController();
+
+  bool busy = false;
+  bool hide = true;
+
+  Future<void> go() async {
+    setState(() => busy = true);
+
+    try {
+      await Api.login(u.text.trim(), p.text);
+
+      if (mounted) {
+        widget.onDone();
+      }
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    u.dispose();
+    p.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    return Scaffold(
+      body: Container(
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: [ocean, Color(0xFF0E6E7E)],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+          ),
+        ),
+        child: SafeArea(
+          child: Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  const Icon(Icons.set_meal, size: 72, color: Colors.white),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Fish Journal',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 30,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                  Panel(
+                    pad: const EdgeInsets.all(20),
+                    child: Column(
+                      children: [
+                        TextField(
+                          controller: u,
+                          decoration: const InputDecoration(
+                            labelText: 'Username',
+                            prefixIcon: Icon(Icons.person_outline),
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        TextField(
+                          controller: p,
+                          obscureText: hide,
+                          decoration: InputDecoration(
+                            labelText: 'Password',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              icon: Icon(
+                                hide ? Icons.visibility : Icons.visibility_off,
+                              ),
+                              onPressed: () {
+                                setState(() => hide = !hide);
+                              },
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        FilledButton(
+                          onPressed: busy ? null : go,
+                          child: busy
+                              ? const SizedBox(
+                                  height: 22,
+                                  width: 22,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Text('Log in'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class HomePage extends StatelessWidget {
+  final void Function(int) go;
+
+  const HomePage({super.key, required this.go});
+
+  @override
+  Widget build(BuildContext c) {
+    return Fut(
+      load: () => Api.req(
+        'GET',
+        '/api/v1/dashboard',
+        q: {'business_date': isoDate(DateTime.now())},
+      ),
+      build: (c, d, re) {
+        final status =
+            '${pick(d, ['status', 'journal_status']) ?? 'not_started'}';
+
+        return RefreshIndicator(
+          onRefresh: () async => re(),
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Grad(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      niceDate(isoDate(DateTime.now())),
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      "Today's Journal",
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Chip(
+                      label: Text(label(status)),
+                      backgroundColor: status == 'open'
+                          ? teal
+                          : status == 'closed'
+                              ? Colors.white
+                              : coral,
+                    ),
+                    const SizedBox(height: 10),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: ocean,
+                      ),
+                      onPressed: () => go(1),
+                      child: Text(
+                        status == 'open'
+                            ? 'Continue journal'
+                            : status == 'closed'
+                                ? 'View summary'
+                                : 'Start daily journal',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _tot(
+                      'Hotels owe you',
+                      pick(d, [
+                        'total_hotel_outstanding',
+                        'hotel_outstanding',
+                        'hotels_outstanding',
+                      ]),
+                      teal,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _tot(
+                      'You owe suppliers',
+                      pick(d, [
+                        'total_supplier_outstanding',
+                        'supplier_outstanding',
+                        'suppliers_outstanding',
+                      ]),
+                      coral,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => sheet(c, const PaySheet(hotel: false)),
+                      icon: const Icon(Icons.north_east),
+                      label: const Text('Pay supplier'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => sheet(c, const PaySheet(hotel: true)),
+                      icon: const Icon(Icons.south_west),
+                      label: const Text('Hotel paid'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              if (d is Map)
+                Panel(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Overview',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 16,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      KV(d),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _tot(String t, dynamic v, Color col) {
+    return Panel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            t,
+            style: const TextStyle(color: Colors.black54, fontSize: 12),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            inr(v),
+            style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: col,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+============================================================
+FILE: lib/screens/journal.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+import 'package:decimal/decimal.dart';
+import '../core/api.dart';
+import '../core/ui.dart';
+
+Decimal d(String s) => Decimal.tryParse(s.trim()) ?? Decimal.zero;
+num n(String s) => num.tryParse(s.trim()) ?? 0;
+
+class JournalPage extends StatefulWidget {
+  final DateTime date;
+  const JournalPage({super.key, required this.date});
+  @override
+  State<JournalPage> createState() => _JS();
+}
+
+class _JS extends State<JournalPage> {
+  Map? j;
+  bool busy = true;
+  String? err;
+  int v = 0;
+  String get ds => isoDate(widget.date);
+  @override
+  void initState() {
+    super.initState();
+    load();
+  }
+
+  Future<void> load() async {
+    setState(() {
+      busy = true;
+      err = null;
+    });
+    try {
+      j = await Api.req('GET', '/api/v1/journals/by-date/$ds');
+    } on ApiException catch (e) {
+      if (e.code == 404) {
+        j = null;
+      } else {
+        err = e.message;
+      }
+    }
+    if (mounted) {
+      setState(() {
+        busy = false;
+        v++;
+      });
+    }
+  }
+
+  Future<void> start() async {
+    try {
+      await Api.req('POST', '/api/v1/journals', body: {'business_date': ds});
+      await load();
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    if (busy) return const Center(child: CircularProgressIndicator());
+    if (err != null) {
+      return Center(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Text(err!),
+        const SizedBox(height: 12),
+        FilledButton(onPressed: load, child: const Text('Retry'))
+      ]));
+    }
+    if (j == null) {
+      return Center(
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.menu_book, size: 64, color: teal),
+                const SizedBox(height: 12),
+                Text('No journal for ${niceDate(ds)}',
+                    style: const TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w600)),
+                const SizedBox(height: 16),
+                FilledButton(
+                    onPressed: start, child: const Text('Start daily journal'))
+              ])));
+    }
+    final closed = '${j!['status']}' == 'closed';
+    final jid = j!['id'] as int;
+    return DefaultTabController(
+        length: 4,
+        child: Column(children: [
+          Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Grad(
+                  child: Row(children: [
+                Expanded(
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(niceDate(ds),
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700)),
+                      Text(closed ? 'Closed (read-only)' : 'Open',
+                          style: const TextStyle(color: Colors.white70))
+                    ])),
+                Icon(closed ? Icons.lock : Icons.edit_note, color: Colors.white)
+              ]))),
+          const TabBar(
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              tabs: [
+                Tab(text: 'Opening'),
+                Tab(text: 'Purchases'),
+                Tab(text: 'Hotel sales'),
+                Tab(text: 'Close')
+              ]),
+          Expanded(
+              child: TabBarView(key: ValueKey(v), children: [
+            OpeningTab(j: j!, ro: closed, done: load),
+            TxTab(
+                path: '/api/v1/purchases',
+                jid: jid,
+                ro: closed,
+                done: load,
+                sale: false),
+            TxTab(
+                path: '/api/v1/hotel-sales',
+                jid: jid,
+                ro: closed,
+                done: load,
+                sale: true),
+            CloseTab(jid: jid, closed: closed, j: j!, done: load)
+          ]))
+        ]));
+  }
+}
+
+class OpeningTab extends StatefulWidget {
+  final Map j;
+  final bool ro;
+  final VoidCallback done;
+  const OpeningTab(
+      {super.key, required this.j, required this.ro, required this.done});
+  @override
+  State<OpeningTab> createState() => _OS();
+}
+
+class _OS extends State<OpeningTab> {
+  List fish = [];
+  final cs = <int, TextEditingController>{};
+  final prev = <int, dynamic>{};
+  bool ok = false;
+  @override
+  void initState() {
+    super.initState();
+    init();
+  }
+
+  Future<void> init() async {
+    fish = await fetch('/api/v1/fish');
+    final items = asList(widget.j['opening_stock'] ??
+        widget.j['opening_stocks'] ??
+        widget.j['opening'] ??
+        widget.j['stock']);
+    for (final f in fish) {
+      final it = items.cast<dynamic>().firstWhere(
+          (e) => e is Map && e['fish_id'] == f['id'],
+          orElse: () => null);
+      prev[f['id']] = pick(it, [
+        'previous_closing',
+        'previous_closing_quantity',
+        'previous_closing_stock'
+      ]);
+      cs[f['id']] = TextEditingController(
+          text: '${pick(it, [
+                    'quantity',
+                    'confirmed_quantity',
+                    'opening_quantity',
+                    'suggested_quantity',
+                    'suggested_opening_quantity'
+                  ]) ?? 0}');
+    }
+    if (mounted) setState(() => ok = true);
+  }
+
+  Future<void> save() async {
+    try {
+      await Api.req('PUT', '/api/v1/journals/${widget.j['id']}/opening-stock',
+          body: {
+            'items': [
+              for (final f in fish)
+                {'fish_id': f['id'], 'quantity': n(cs[f['id']]!.text)}
+            ]
+          });
+      if (mounted) toast(context, 'Opening stock confirmed');
+      widget.done();
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    if (!ok) return const Center(child: CircularProgressIndicator());
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('Check the real stock in the shop, then confirm.',
+          style: TextStyle(color: Colors.black54)),
+      const SizedBox(height: 12),
+      for (final f in fish)
+        Panel(
+            child: Row(children: [
+          Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Text('${f['name']}',
+                    style: const TextStyle(
+                        fontWeight: FontWeight.w700, fontSize: 16)),
+                Text('Yesterday closing: ${kg(prev[f['id']])}',
+                    style: const TextStyle(color: Colors.black54, fontSize: 12))
+              ])),
+          SizedBox(
+              width: 120,
+              child: widget.ro
+                  ? Text(cs[f['id']]!.text)
+                  : numField(cs[f['id']]!, 'kg'))
+        ])),
+      if (!widget.ro)
+        FilledButton(
+            onPressed: save, child: const Text('Confirm opening stock'))
+    ]);
+  }
+}
+
+class TxTab extends StatelessWidget {
+  final String path;
+  final int jid;
+  final bool ro, sale;
+  final VoidCallback done;
+  const TxTab(
+      {super.key,
+      required this.path,
+      required this.jid,
+      required this.ro,
+      required this.done,
+      required this.sale});
+  @override
+  Widget build(BuildContext c) => Scaffold(
+      backgroundColor: Colors.transparent,
+      floatingActionButton: ro
+          ? null
+          : FloatingActionButton.extended(
+              backgroundColor: ocean,
+              foregroundColor: Colors.white,
+              onPressed: () async {
+                if (await sheet<bool>(c, TxForm(jid: jid, sale: sale)) ==
+                    true) {
+                  done();
+                }
+              },
+              icon: const Icon(Icons.add),
+              label: Text(sale ? 'Add sale' : 'Add purchase')),
+      body: Fut(
+          load: () => fetch(path, q: {'journal_id': '$jid'}),
+          build: (c, data, re) {
+            final l = data as List;
+            if (l.isEmpty) {
+              return Center(
+                  child:
+                      Text(sale ? 'No hotel sales yet' : 'No purchases yet'));
+            }
+            return ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
+                children: [
+                  for (final e in l)
+                    Panel(
+                        child: Row(children: [
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Text(
+                                '${pick(e, [
+                                          sale ? 'hotel_name' : 'supplier_name',
+                                          'name'
+                                        ]) ?? ''} • ${pick(e, ['fish_name']) ?? ''}',
+                                style: const TextStyle(fontWeight: FontWeight.w700)),
+                            Text('${kg(e['quantity'])} × ${inr(e['rate'])}'),
+                            if (!sale)
+                              Text(
+                                  'Paid ${inr(e['paid_now'])} • Due ${inr(pick(e, [
+                                        'due_created',
+                                        'due'
+                                      ]))}',
+                                  style: const TextStyle(color: coral))
+                          ])),
+                      Text(inr(pick(e, ['amount', 'total_amount'])),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w800, fontSize: 16)),
+                      if (!ro)
+                        IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              if (!await confirm(c, 'Delete this entry?')) {
+                                return;
+                              }
+                              try {
+                                await Api.req('DELETE', '$path/${e['id']}');
+                                done();
+                              } on ApiException catch (x) {
+                                if (c.mounted) toast(c, x.message);
+                              }
+                            })
+                    ]))
+                ]);
+          }));
+}
+
+class TxForm extends StatefulWidget {
+  final int jid;
+  final bool sale;
+  const TxForm({super.key, required this.jid, required this.sale});
+  @override
+  State<TxForm> createState() => _TF();
+}
+
+class _TF extends State<TxForm> {
+  List parties = [], fish = [];
+  int? p, f;
+  String mode = 'cash';
+  String? saved;
+  final q = TextEditingController(),
+      r = TextEditingController(),
+      paid = TextEditingController(text: '0');
+  @override
+  void initState() {
+    super.initState();
+    Future.wait([
+      fetch(widget.sale ? '/api/v1/hotels' : '/api/v1/suppliers'),
+      fetch('/api/v1/fish')
+    ])
+        .then((x) => setState(() {
+              parties = x[0];
+              fish = x[1];
+            }))
+        .catchError((e) {
+      if (mounted) toast(context, '$e');
+    });
+  }
+
+  Future<void> rate() async {
+    if (!widget.sale || p == null || f == null) return;
+    try {
+      final l = await fetch('/api/v1/hotels/$p/rates');
+      final m = l
+          .cast<dynamic>()
+          .firstWhere((e) => e['fish_id'] == f, orElse: () => null);
+      saved = m == null ? null : '${m['rate']}';
+      setState(() => r.text = saved ?? '');
+    } catch (_) {}
+  }
+
+  Future<void> submit() async {
+    if (p == null ||
+        f == null ||
+        d(q.text) <= Decimal.zero ||
+        (!widget.sale || true) && r.text.trim().isEmpty && !widget.sale) {
+      toast(context, 'Fill all fields');
+      return;
+    }
+    final body = widget.sale
+        ? {
+            'hotel_id': p,
+            'fish_id': f,
+            'quantity': n(q.text),
+            'journal_id': widget.jid,
+            if (r.text.isNotEmpty && r.text != saved) 'rate': n(r.text)
+          }
+        : {
+            'journal_id': widget.jid,
+            'supplier_id': p,
+            'fish_id': f,
+            'quantity': n(q.text),
+            'rate': n(r.text),
+            'paid_now': n(paid.text),
+            'payment_mode': mode
+          };
+    try {
+      await Api.req(
+          'POST', widget.sale ? '/api/v1/hotel-sales' : '/api/v1/purchases',
+          body: body);
+      if (mounted) Navigator.pop(context, true);
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    final amt = d(q.text) * d(r.text);
+    final due = amt - d(paid.text);
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Text(widget.sale ? 'Hotel sale' : 'New purchase',
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+      const SizedBox(height: 14),
+      drop(widget.sale ? 'Hotel' : 'Supplier', p, parties, (v) {
+        setState(() => p = v);
+        rate();
+      }),
+      const SizedBox(height: 12),
+      drop('Fish', f, fish, (v) {
+        setState(() => f = v);
+        rate();
+      }),
+      const SizedBox(height: 12),
+      numField(q, 'Quantity (kg)', onChanged: (_) => setState(() {})),
+      const SizedBox(height: 12),
+      numField(r, 'Rate per kg (₹)', onChanged: (_) => setState(() {})),
+      const SizedBox(height: 12),
+      if (!widget.sale) ...[
+        numField(paid, 'Paid now (₹)', onChanged: (_) => setState(() {})),
+        const SizedBox(height: 12),
+        SegmentedButton<String>(segments: const [
+          ButtonSegment(
+              value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)),
+          ButtonSegment(
+              value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))
+        ], selected: {
+          mode
+        }, onSelectionChanged: (s) => setState(() => mode = s.first)),
+        const SizedBox(height: 12)
+      ],
+      Panel(
+          child: Column(children: [
+        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          const Text('Amount'),
+          Text('₹$amt',
+              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 18))
+        ]),
+        if (!widget.sale)
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('Due'),
+            Text('₹$due',
+                style:
+                    const TextStyle(color: coral, fontWeight: FontWeight.w700))
+          ])
+      ])),
+      FilledButton(onPressed: submit, child: const Text('Save'))
+    ]);
+  }
+}
+
+class CloseTab extends StatefulWidget {
+  final int jid;
+  final bool closed;
+  final Map j;
+  final VoidCallback done;
+  const CloseTab(
+      {super.key,
+      required this.jid,
+      required this.closed,
+      required this.j,
+      required this.done});
+  @override
+  State<CloseTab> createState() => _CS();
+}
+
+class _CS extends State<CloseTab> {
+  List fish = [];
+  final cs = <int, TextEditingController>{};
+  final cash = TextEditingController(), upi = TextEditingController();
+  Map? prev;
+  Map<String, dynamic>? body;
+  @override
+  void initState() {
+    super.initState();
+    fetch('/api/v1/fish').then((l) => setState(() {
+          fish = l;
+          for (final f in l) {
+            cs[f['id']] = TextEditingController();
+          }
+        }));
+  }
+
+  Map<String, dynamic> build_() => {
+        'stocks': [
+          for (final f in fish)
+            {'fish_id': f['id'], 'quantity': n(cs[f['id']]!.text)}
+        ],
+        'cash_amount': n(cash.text),
+        'upi_amount': n(upi.text)
+      };
+  Future<void> preview() async {
+    final b = build_();
+    try {
+      final r = await Api.req(
+          'POST', '/api/v1/journals/${widget.jid}/close-preview',
+          body: b);
+      setState(() {
+        prev = r;
+        body = b;
+      });
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  Future<void> close() async {
+    if (!await confirm(context, 'Close this journal? It becomes read-only.')) {
+      return;
+    }
+    try {
+      await Api.req('POST', '/api/v1/journals/${widget.jid}/close', body: body);
+      widget.done();
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) {
+    if (widget.closed) {
+      return ListView(
+          padding: const EdgeInsets.all(16),
+          children: [Panel(child: KV(widget.j))]);
+    }
+    final can = prev != null && prev!['can_close'] == true;
+    return ListView(padding: const EdgeInsets.all(16), children: [
+      const Text('Remaining stock in the shop',
+          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
+      const SizedBox(height: 8),
+      for (final f in fish)
+        Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: numField(cs[f['id']]!, '${f['name']} (kg)',
+                onChanged: (_) => setState(() => prev = null))),
+      numField(cash, 'Cash collected (₹)',
+          onChanged: (_) => setState(() => prev = null)),
+      const SizedBox(height: 10),
+      numField(upi, 'UPI collected (₹)',
+          onChanged: (_) => setState(() => prev = null)),
+      const SizedBox(height: 14),
+      FilledButton.tonal(
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
+          onPressed: preview,
+          child: const Text('Preview closing')),
+      if (prev != null) ...[
+        const SizedBox(height: 14),
+        Panel(
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          KV(prev!),
+          for (final e in prev!.values.whereType<List>())
+            for (final it in e) ...[
+              const Divider(),
+              it is Map
+                  ? KV(it)
+                  : Text('$it', style: const TextStyle(color: coral))
+            ]
+        ])),
+        FilledButton(
+            onPressed: can ? close : null, child: const Text('Close journal'))
+      ]
+    ]);
+  }
+}
+
+
+============================================================
+FILE: lib/screens/more.dart
+============================================================
+import 'package:material_ui/material_ui.dart';
+import '../core/api.dart';
+import '../core/ui.dart';
+import 'journal.dart';
+
+class HistoryPage extends StatelessWidget {
+  const HistoryPage({super.key});
+  @override
+  Widget build(BuildContext c) => Column(children: [
+        const Padding(
+            padding: EdgeInsets.all(16),
+            child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('History',
+                    style:
+                        TextStyle(fontSize: 26, fontWeight: FontWeight.w800)))),
+        Expanded(
+            child: Fut(
+                load: () =>
+                    fetch('/api/v1/history', q: {'limit': '60', 'offset': '0'}),
+                build: (c, data, re) {
+                  final l = data as List;
+                  if (l.isEmpty) {
+                    return const Center(child: Text('No previous journals'));
+                  }
+                  return ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        for (final e in l)
+                          Panel(
+                              onTap: () {
+                                final dt = DateTime.tryParse(
+                                    '${pick(e, ['business_date', 'date'])}');
+                                if (dt != null) {
+                                  Navigator.push(
+                                      c,
+                                      MaterialPageRoute(
+                                          builder: (_) => Scaffold(
+                                              appBar: AppBar(),
+                                              body: JournalPage(date: dt))));
+                                }
+                              },
+                              child: Row(children: [
+                                Expanded(
+                                    child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                      Text(
+                                          niceDate('${pick(e, [
+                                                'business_date',
+                                                'date'
+                                              ])}'),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w700,
+                                              fontSize: 16)),
+                                      Text(
+                                          'Cash ${inr(pick(e, [
+                                                'cash_amount'
+                                              ]))} • UPI ${inr(pick(e, [
+                                                'upi_amount'
+                                              ]))}',
+                                          style: const TextStyle(
+                                              color: Colors.black54,
+                                              fontSize: 12))
+                                    ])),
+                                Column(
+                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                    children: [
+                                      Text(
+                                          inr(pick(e, [
+                                            'total_money',
+                                            'total_amount',
+                                            'total_collection',
+                                            'total'
+                                          ])),
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800)),
+                                      Text(label('${pick(e, ['status'])}'),
+                                          style: TextStyle(
+                                              color: '${pick(e, ['status'])}' ==
+                                                      'closed'
+                                                  ? Colors.black45
+                                                  : teal,
+                                              fontSize: 12))
+                                    ])
+                              ]))
+                      ]);
+                }))
+      ]);
+}
+
+class SettingsPage extends StatelessWidget {
+  final VoidCallback onLogout;
+  const SettingsPage({super.key, required this.onLogout});
+  @override
+  Widget build(BuildContext c) =>
+      ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('Settings',
+            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 12),
+        for (final x in [
+          ['Fish varieties', '/api/v1/fish', Icons.set_meal],
+          ['Suppliers', '/api/v1/suppliers', Icons.local_shipping],
+          ['Hotels', '/api/v1/hotels', Icons.hotel]
+        ])
+          Panel(
+              onTap: () => Navigator.push(
+                  c,
+                  MaterialPageRoute(
+                      builder: (_) => MasterPage(
+                          title: x[0] as String, path: x[1] as String))),
+              child: Row(children: [
+                Icon(x[2] as IconData, color: ocean),
+                const SizedBox(width: 14),
+                Expanded(
+                    child: Text(x[0] as String,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w600))),
+                const Icon(Icons.chevron_right)
+              ])),
+        Panel(
+            onTap: () => sheet(c, const PwSheet()),
+            child: const Row(children: [
+              Icon(Icons.lock_reset, color: ocean),
+              SizedBox(width: 14),
+              Text('Change password',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600))
+            ])),
+        Panel(
+            onTap: () async {
+              if (await confirm(c, 'Log out?')) onLogout();
+            },
+            child: const Row(children: [
+              Icon(Icons.logout, color: coral),
+              SizedBox(width: 14),
+              Text('Log out',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600))
+            ]))
+      ]);
+}
+
+class MasterPage extends StatefulWidget {
+  final String title, path;
+  const MasterPage({super.key, required this.title, required this.path});
+  @override
+  State<MasterPage> createState() => _MS();
+}
+
+class _MS extends State<MasterPage> {
+  bool inactive = false;
+  int v = 0;
+  Future<void> add() async {
+    final t = TextEditingController();
+    final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+                title: Text('Add ${widget.title}'),
+                content: TextField(
+                    controller: t,
+                    autofocus: true,
+                    decoration: const InputDecoration(labelText: 'Name')),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel')),
+                  FilledButton(
+                      style: FilledButton.styleFrom(
+                          minimumSize: const Size(90, 44)),
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Save'))
+                ]));
+    if (ok != true || t.text.trim().isEmpty) return;
+    try {
+      await Api.req('POST', widget.path, body: {'name': t.text.trim()});
+      setState(() => v++);
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) => Scaffold(
+      appBar: AppBar(title: Text(widget.title), actions: [
+        Row(children: [
+          const Text('Inactive'),
+          Switch(
+              value: inactive,
+              onChanged: (x) => setState(() {
+                    inactive = x;
+                    v++;
+                  }))
+        ])
+      ]),
+      floatingActionButton: FloatingActionButton(
+          backgroundColor: ocean,
+          foregroundColor: Colors.white,
+          onPressed: add,
+          child: const Icon(Icons.add)),
+      body: Fut(
+          key: ValueKey(v),
+          load: () =>
+              fetch(widget.path, q: {if (inactive) 'include_inactive': 'true'}),
+          build: (c, data, re) =>
+              ListView(padding: const EdgeInsets.all(16), children: [
+                for (final e in data as List)
+                  Panel(
+                      child: Row(children: [
+                    Expanded(
+                        child: Text('${e['name']}',
+                            style: const TextStyle(
+                                fontSize: 16, fontWeight: FontWeight.w600))),
+                    Switch(
+                        value: e['is_active'] != false,
+                        onChanged: (x) async {
+                          try {
+                            await Api.req('PATCH', '${widget.path}/${e['id']}',
+                                body: {'is_active': x});
+                            setState(() => v++);
+                          } on ApiException catch (er) {
+                            if (c.mounted) toast(c, er.message);
+                          }
+                        })
+                  ]))
+              ])));
+}
+
+class PwSheet extends StatefulWidget {
+  const PwSheet({super.key});
+  @override
+  State<PwSheet> createState() => _PW();
+}
+
+class _PW extends State<PwSheet> {
+  final o = TextEditingController(), n_ = TextEditingController();
+  Future<void> save() async {
+    if (n_.text.length < 10) {
+      toast(context, 'New password needs at least 10 characters');
+      return;
+    }
+    try {
+      await Api.req('POST', '/api/v1/auth/change-password',
+          body: {'current_password': o.text, 'new_password': n_.text});
+      if (mounted) {
+        Navigator.pop(context);
+        toast(context, 'Password changed');
+      }
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  @override
+  Widget build(BuildContext c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('Change password',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 14),
+        TextField(
+            controller: o,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Current password')),
+        const SizedBox(height: 12),
+        TextField(
+            controller: n_,
+            obscureText: true,
+            decoration: const InputDecoration(
+                labelText: 'New password (10+ characters)')),
+        const SizedBox(height: 16),
+        FilledButton(onPressed: save, child: const Text('Update'))
+      ]);
+}
+
