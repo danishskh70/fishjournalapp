@@ -139,8 +139,10 @@ class HomePage extends StatelessWidget {
         q: {'business_date': isoDate(DateTime.now())},
       ),
       build: (c, d, re) {
-        final status =
-            '${pick(d, ['status', 'journal_status']) ?? 'not_started'}';
+        final journal = d['journal'];
+        final status = journal is Map
+            ? '${journal['status'] ?? 'not_started'}'
+            : 'not_started';
 
         return RefreshIndicator(
           onRefresh: () async => re(),
@@ -197,11 +199,7 @@ class HomePage extends StatelessWidget {
                   Expanded(
                     child: _tot(
                       'Hotels owe you',
-                      pick(d, [
-                        'total_hotel_outstanding',
-                        'hotel_outstanding',
-                        'hotels_outstanding',
-                      ]),
+                      d['hotel_outstanding_total'],
                       teal,
                     ),
                   ),
@@ -209,11 +207,7 @@ class HomePage extends StatelessWidget {
                   Expanded(
                     child: _tot(
                       'You owe suppliers',
-                      pick(d, [
-                        'total_supplier_outstanding',
-                        'supplier_outstanding',
-                        'suppliers_outstanding',
-                      ]),
+                      d['supplier_outstanding_total'],
                       coral,
                     ),
                   ),

@@ -158,32 +158,53 @@ class _OS extends State<OpeningTab> {
 
   Future<void> init() async {
     fish = await fetch('/api/v1/fish');
-    final items = asList(widget.j['opening_stock'] ??
-        widget.j['opening_stocks'] ??
-        widget.j['opening'] ??
-        widget.j['stock']);
+    final stock = widget.j['stock'];
+    final items = stock is Map ? asList(stock['rows']) : <dynamic>[];
+
     for (final f in fish) {
       final it = items.cast<dynamic>().firstWhere(
           (e) => e is Map && e['fish_id'] == f['id'],
           orElse: () => null);
-      prev[f['id']] = pick(it, [
-        'previous_closing',
-        'previous_closing_quantity',
-        'previous_closing_stock'
-      ]);
-      cs[f['id']] = TextEditingController(
-          text: '${pick(it, [
-                    'quantity',
-                    'confirmed_quantity',
-                    'opening_quantity',
-                    'suggested_quantity',
-                    'suggested_opening_quantity'
-                  ]) ?? 0}');
+
+      final previous = it is Map ? it['previous_closing'] : null;
+      final confirmed = it is Map && it['opening_confirmed'] == true;
+
+      final opening = it is Map
+          ? (confirmed
+              ? it['opening_quantity']
+              : it['suggested_opening'] ?? it['opening_quantity'])
+          : null;
+
+      prev[f['id']] = previous;
+
+      // A first journal can start at zero. Otherwise, do not silently
+      // replace a missing suggested quantity with zero.
+      final initial = opening ?? (previous == null ? '0' : '');
+
+      cs[f['id']] = TextEditingController(text: '$initial');
     }
     if (mounted) setState(() => ok = true);
   }
 
   Future<void> save() async {
+    final missing =
+        fish.where((f) => cs[f['id']]!.text.trim().isEmpty).toList();
+
+    if (missing.isNotEmpty) {
+      toast(context, 'Enter opening stock for every fish');
+      return;
+    }
+
+    final invalid = fish.where((f) {
+      final value = num.tryParse(cs[f['id']]!.text.trim());
+      return value == null || value < 0;
+    }).toList();
+
+    if (invalid.isNotEmpty) {
+      toast(context, 'Opening stock must be zero or greater');
+      return;
+    }
+
     try {
       await Api.req('PUT', '/api/v1/journals/${widget.j['id']}/opening-stock',
           body: {
@@ -491,6 +512,40 @@ class _CS extends State<CloseTab> {
         'upi_amount': n(upi.text)
       };
   Future<void> preview() async {
+    if (cash.text.trim().isEmpty || upi.text.trim().isEmpty) {
+      toast(context, 'Enter cash and UPI amounts. Use 0 if none.');
+      return;
+    }
+
+    final moneyInvalid = [cash.text, upi.text].any((text) {
+      final value = num.tryParse(text.trim());
+      return value == null || value < 0;
+    });
+
+    if (moneyInvalid) {
+      toast(context, 'Cash and UPI amounts must be zero or greater');
+      return;
+    }
+
+    final missing =
+        fish.where((f) => cs[f['id']]!.text.trim().isEmpty).toList();
+
+    if (missing.isNotEmpty) {
+      toast(context,
+          'Enter remaining stock for every fish. Use 0 if none remains.');
+      return;
+    }
+
+    final invalid = fish.where((f) {
+      final value = num.tryParse(cs[f['id']]!.text.trim());
+      return value == null || value < 0;
+    }).toList();
+
+    if (invalid.isNotEmpty) {
+      toast(context, 'Remaining stock must be zero or greater');
+      return;
+    }
+
     final b = build_();
     try {
       final r = await Api.req(
@@ -517,13 +572,181 @@ class _CS extends State<CloseTab> {
     }
   }
 
+  Widget _section(String title, List<Widget> children) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Panel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 16,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _metric(String title, dynamic value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(title, style: const TextStyle(color: Colors.black54)),
+          ),
+          Text(
+            '$value',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _record(String title, String detail) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+          Text(detail, style: const TextStyle(color: Colors.black54)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext c) {
     if (widget.closed) {
+      final stock = widget.j['stock'] is Map ? widget.j['stock'] as Map : {};
+      final purchases =
+          widget.j['purchases'] is Map ? widget.j['purchases'] as Map : {};
+      final sales = widget.j['sales'] is Map ? widget.j['sales'] as Map : {};
+      final money = widget.j['money'] is Map ? widget.j['money'] as Map : {};
+      final hotelInfo =
+          widget.j['hotel_info'] is Map ? widget.j['hotel_info'] as Map : {};
+      final supplierInfo = widget.j['supplier_info'] is Map
+          ? widget.j['supplier_info'] as Map
+          : {};
+
+      final stockRows = asList(stock['rows']);
+      final purchaseRows = asList(purchases['entries']);
+      final hotelSales = asList(sales['hotel_sales']);
+      final normalSales = asList(sales['normal_customer']);
+      final hotelPayments = asList(hotelInfo['payments_received']);
+      final supplierPayments = asList(supplierInfo['later_payments']);
+      final purchaseTotals =
+          purchases['totals'] is Map ? purchases['totals'] as Map : {};
+
       return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [Panel(child: KV(widget.j))]);
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(
+            niceDate('${widget.j['business_date']}'),
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 20,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _section('Stock summary', [
+            for (final row in stockRows)
+              if (row is Map)
+                _record(
+                  '${row['fish_name']}',
+                  'Opening: ${kg(row['opening_quantity'])}'
+                      '  •  Purchased: ${kg(row['purchased'])}'
+                      '  •  Hotel sold: ${kg(row['hotel_sold'])}'
+                      '  •  Normal sale: ${row['normal_customer'] == null ? '—' : kg(row['normal_customer'])}'
+                      '  •  Remaining: ${row['remaining'] == null ? '—' : kg(row['remaining'])}',
+                ),
+          ]),
+          _section('Purchases', [
+            _metric('Total quantity', kg(purchaseTotals['total_quantity'])),
+            _metric('Total amount', inr(purchaseTotals['total_amount'])),
+            _metric('Paid immediately', inr(purchaseTotals['total_paid_now'])),
+            _metric('Dues created', inr(purchaseTotals['total_due_created'])),
+            for (final item in purchaseRows)
+              if (item is Map)
+                _record(
+                  '${item['supplier_name']} · ${item['fish_name']}',
+                  '${kg(item['quantity'])} × ${inr(item['rate'])}'
+                      ' = ${inr(item['amount'])}'
+                      '  •  Paid: ${inr(item['paid_now'])}'
+                      '  •  Due: ${inr(item['due_created'])}',
+                ),
+          ]),
+          _section('Hotel sales', [
+            _metric('Total quantity', kg(sales['total_hotel_quantity'])),
+            _metric('Total amount', inr(sales['total_hotel_amount'])),
+            for (final item in hotelSales)
+              if (item is Map)
+                _record(
+                  '${item['hotel_name']} · ${item['fish_name']}',
+                  '${kg(item['quantity'])} × ${inr(item['rate'])}'
+                      ' = ${inr(item['amount'])}',
+                ),
+          ]),
+          _section('Normal customer sales', [
+            _metric(
+              'Total quantity',
+              sales['total_normal_customer_quantity'] == null
+                  ? '—'
+                  : kg(sales['total_normal_customer_quantity']),
+            ),
+            for (final item in normalSales)
+              if (item is Map)
+                _metric(
+                  '${item['fish_name']}',
+                  kg(item['quantity']),
+                ),
+          ]),
+          _section('Daily money', [
+            _metric('Cash collected', inr(money['cash_amount'])),
+            _metric('UPI collected', inr(money['upi_amount'])),
+            _metric('Total', inr(money['total'])),
+          ]),
+          _section('Hotel payments received', [
+            _metric('Hotel sales total', inr(hotelInfo['sales_total'])),
+            for (final item in hotelPayments)
+              if (item is Map)
+                _record(
+                  '${item['hotel_name']}',
+                  '${inr(item['amount'])} · ${item['payment_mode']}'
+                      ' · ${item['payment_date']}',
+                ),
+          ]),
+          _section('Supplier payments', [
+            _metric(
+              'Paid immediately',
+              inr(supplierInfo['paid_immediately_total']),
+            ),
+            _metric(
+              'Dues created',
+              inr(supplierInfo['dues_created_total']),
+            ),
+            for (final item in supplierPayments)
+              if (item is Map)
+                _record(
+                  '${item['supplier_name']}',
+                  '${inr(item['amount'])} · ${item['payment_mode']}'
+                      ' · ${item['payment_date']}'
+                      '${item['is_immediate'] == true ? ' · Immediate' : ''}',
+                ),
+          ]),
+        ],
+      );
     }
+
     final can = prev != null && prev!['can_close'] == true;
     return ListView(padding: const EdgeInsets.all(16), children: [
       const Text('Remaining stock in the shop',
