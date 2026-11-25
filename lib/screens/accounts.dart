@@ -1,4 +1,4 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/ui.dart';
 import 'journal.dart';
@@ -41,9 +41,8 @@ class _Bal extends StatelessWidget {
             load: () => fetch('/api/v1/accounts/$k'),
             build: (c, data, re) {
               final l = data as List;
-              if (l.isEmpty) {
+              if (l.isEmpty)
                 return const Center(child: Text('No accounts yet'));
-              }
               return RefreshIndicator(
                   onRefresh: () async => re(),
                   child: ListView(
@@ -66,8 +65,8 @@ class _Bal extends StatelessWidget {
                                               ])}'))),
                               child: Row(children: [
                                 CircleAvatar(
-                                    backgroundColor: (hotel ? teal : coral)
-                                        .withValues(alpha: 0.1),
+                                    backgroundColor:
+                                        (hotel ? teal : coral).withOpacity(.15),
                                     child: Icon(
                                         hotel
                                             ? Icons.hotel
@@ -115,6 +114,10 @@ class _LS extends State<LedgerPage> {
   @override
   Widget build(BuildContext c) => Scaffold(
       appBar: AppBar(title: Text(widget.name), actions: [
+        if (widget.hotel)
+          IconButton(
+              icon: const Icon(Icons.calendar_month),
+              onPressed: () => sheet(c, MonthSheet(id: widget.id))),
         IconButton(
             icon: const Icon(Icons.date_range),
             onPressed: () async {
@@ -139,60 +142,106 @@ class _LS extends State<LedgerPage> {
                   }),
           build: (c, d, re) =>
               ListView(padding: const EdgeInsets.all(16), children: [
-                if (d is Map)
-                  Grad(
-                      child: Column(children: [
-                    for (final k in ['previous_balance', 'closing_balance'])
-                      if (d[k] != null)
-                        Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(label(k),
-                                  style:
-                                      const TextStyle(color: Colors.white70)),
-                              Text(inr(d[k]),
-                                  style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 18))
-                            ])
-                  ])),
+                Grad(
+                    child: Column(children: [
+                  for (final k in ['previous_balance', 'closing_balance'])
+                    Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(label(k),
+                              style: const TextStyle(color: Colors.white70)),
+                          Text(inr(d[k]),
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 18))
+                        ])
+                ])),
                 const SizedBox(height: 12),
-                for (final e in asList(d))
+                for (final e in d['entries'] as List)
                   Panel(
-                      child: Row(children: [
-                    Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          Text(
-                              label('${pick(e, ['entry_type', 'type']) ?? ''}'),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700)),
-                          Text(
-                              '${niceDate('${pick(e, [
-                                    'date',
-                                    'entry_date'
-                                  ])}')} ${pick(e, ['fish_name']) ?? ''}',
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Row(children: [
+                          Expanded(
+                              child: Text(
+                                  label('${e['entry_type']}') +
+                                      (e['fish_name'] != null
+                                          ? ' • ${e['fish_name']}'
+                                          : ''),
+                                  style: const TextStyle(
+                                      fontWeight: FontWeight.w800))),
+                          Text(niceDate('${e['date']}'),
                               style: const TextStyle(
                                   color: Colors.black54, fontSize: 12))
-                        ])),
-                    Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(inr(pick(e, ['amount'])),
-                              style:
-                                  const TextStyle(fontWeight: FontWeight.w700)),
-                          Text(
-                              'Bal ${inr(pick(e, [
-                                    'running_balance',
-                                    'balance'
-                                  ]))}',
-                              style: const TextStyle(
-                                  fontSize: 12, color: Colors.black54))
+                        ]),
+                        const SizedBox(height: 8),
+                        Wrap(children: [
+                          if (e['quantity'] != null)
+                            Tile('Quantity', kg(e['quantity'])),
+                          if (e['rate'] != null) Tile('Rate', inr(e['rate'])),
+                          Tile('Amount', inr(e['amount'])),
+                          if (e['paid_now'] != null)
+                            Tile('Paid now', inr(e['paid_now'])),
+                          if (e['due_created'] != null)
+                            Tile('Due', inr(e['due_created']), col: coral),
+                          if (e['payment_mode'] != null)
+                            Tile('Mode', '${e['payment_mode']}'.toUpperCase()),
+                          Tile('Change', inr(e['balance_change']), col: teal),
+                          Tile('Balance', inr(e['running_balance']), col: ocean)
                         ])
-                  ]))
+                      ]))
               ])));
+}
+
+class MonthSheet extends StatefulWidget {
+  final int id;
+  const MonthSheet({super.key, required this.id});
+  @override
+  State<MonthSheet> createState() => _MoS();
+}
+
+class _MoS extends State<MonthSheet> {
+  DateTime m = DateTime(DateTime.now().year, DateTime.now().month);
+  @override
+  Widget build(BuildContext c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          IconButton(
+              icon: const Icon(Icons.chevron_left),
+              onPressed: () =>
+                  setState(() => m = DateTime(m.year, m.month - 1))),
+          Expanded(
+              child: Center(
+                  child: Text('${m.month}/${m.year}',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w800)))),
+          IconButton(
+              icon: const Icon(Icons.chevron_right),
+              onPressed: () =>
+                  setState(() => m = DateTime(m.year, m.month + 1)))
+        ]),
+        SizedBox(
+            height: 220,
+            child: Fut(
+                key: ValueKey(m),
+                load: () => Api.req('GET',
+                    '/api/v1/accounts/hotels/${widget.id}/monthly-summary',
+                    q: {'year': '${m.year}', 'month': '${m.month}'}),
+                build: (c, d, re) => Column(children: [
+                      Inner(Row(children: [
+                        Mini('Opening', inr(d['opening_outstanding'])),
+                        Mini('Fish taken', inr(d['fish_taken']))
+                      ])),
+                      Inner(Row(children: [
+                        Mini('Payments', inr(d['payments_received']),
+                            col: teal),
+                        Mini('Closing', inr(d['closing_outstanding']),
+                            col: coral)
+                      ]))
+                    ])))
+      ]);
 }
 
 class PaySheet extends StatefulWidget {
@@ -206,6 +255,7 @@ class _PS extends State<PaySheet> {
   List parties = [];
   int? p;
   String mode = 'cash';
+  DateTime? dt;
   final a = TextEditingController();
   @override
   void initState() {
@@ -225,7 +275,8 @@ class _PS extends State<PaySheet> {
           body: {
             widget.hotel ? 'hotel_id' : 'supplier_id': p,
             'amount': n(a.text),
-            'payment_mode': mode
+            'payment_mode': mode,
+            if (dt != null) 'payment_date': isoDate(dt!)
           });
       if (mounted) {
         Navigator.pop(context);
@@ -258,6 +309,21 @@ class _PS extends State<PaySheet> {
         ], selected: {
           mode
         }, onSelectionChanged: (s) => setState(() => mode = s.first)),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+                minimumSize: const Size.fromHeight(50)),
+            icon: const Icon(Icons.event),
+            label: Text(
+                dt == null ? 'Date: Today' : 'Date: ${niceDate(isoDate(dt!))}'),
+            onPressed: () async {
+              final x = await showDatePicker(
+                  context: c,
+                  initialDate: dt ?? DateTime.now(),
+                  firstDate: DateTime(2020),
+                  lastDate: DateTime.now());
+              if (x != null) setState(() => dt = x);
+            }),
         const SizedBox(height: 16),
         FilledButton(onPressed: save, child: const Text('Save payment'))
       ]);

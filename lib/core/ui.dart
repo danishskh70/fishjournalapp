@@ -1,4 +1,4 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'api.dart';
 
@@ -169,10 +169,9 @@ class _FutS extends State<Fut> {
   Widget build(BuildContext c) => FutureBuilder(
       future: f,
       builder: (c, s) {
-        if (s.connectionState != ConnectionState.done) {
+        if (s.connectionState != ConnectionState.done)
           return const Center(child: CircularProgressIndicator());
-        }
-        if (s.hasError) {
+        if (s.hasError)
           return Center(
               child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -184,7 +183,6 @@ class _FutS extends State<Fut> {
                     const SizedBox(height: 12),
                     FilledButton(onPressed: re, child: const Text('Retry'))
                   ])));
-        }
         return widget.build(c, s.data, re);
       });
 }
@@ -200,7 +198,7 @@ Future<List> fetch(String p, {Map<String, String>? q}) async =>
     asList(await Api.req('GET', p, q: q));
 Widget drop(String l, int? v, List items, void Function(int?) on) =>
     DropdownButtonFormField<int>(
-        initialValue: items.any((e) => e['id'] == v) ? v : null,
+        value: items.any((e) => e['id'] == v) ? v : null,
         decoration: InputDecoration(labelText: l),
         items: [
           for (final e in items)
@@ -208,3 +206,103 @@ Widget drop(String l, int? v, List items, void Function(int?) on) =>
                 value: e['id'] as int, child: Text('${e['name']}'))
         ],
         onChanged: on);
+
+class Mini extends StatelessWidget {
+  final String l, v;
+  final Color col;
+  const Mini(this.l, this.v, {super.key, this.col = ocean});
+  @override
+  Widget build(BuildContext c) => Expanded(
+      child: Container(
+          margin: const EdgeInsets.all(3),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+              color: col.withOpacity(.08),
+              borderRadius: BorderRadius.circular(14)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(l,
+                style: const TextStyle(fontSize: 11, color: Colors.black54)),
+            const SizedBox(height: 2),
+            Text(v, style: TextStyle(fontWeight: FontWeight.w800, color: col))
+          ])));
+}
+
+dynamic fuzzy(dynamic m, List<String> t) {
+  if (m is Map) {
+    for (final e in m.entries) {
+      final k = '${e.key}'.toLowerCase();
+      if (e.value != null &&
+          e.value is! Map &&
+          e.value is! List &&
+          t.every(k.contains)) return e.value;
+    }
+    for (final v in m.values) {
+      final r = fuzzy(v, t);
+      if (r != null) return r;
+    }
+  }
+  return null;
+}
+
+Map<String, List> fishLists(dynamic m, [String k = '', Map<String, List>? o]) {
+  o ??= {};
+  if (m is List) {
+    if (m.isNotEmpty &&
+        m.first is Map &&
+        (m.first as Map).containsKey('fish_id')) {
+      o[k] = m;
+    } else {
+      for (final x in m) {
+        fishLists(x, k, o);
+      }
+    }
+  } else if (m is Map) {
+    m.forEach((kk, v) => fishLists(v, '$kk'.toLowerCase(), o));
+  }
+  return o;
+}
+
+Map<int, String>? _fn;
+Future<Map<int, String>> fishNames() async {
+  _fn ??= {
+    for (final f
+        in await fetch('/api/v1/fish', q: {'include_inactive': 'true'}))
+      f['id'] as int: '${f['name']}'
+  };
+  return _fn!;
+}
+
+class Tile extends StatelessWidget {
+  final String l, v;
+  final Color col;
+  const Tile(this.l, this.v, {super.key, this.col = ocean});
+  @override
+  Widget build(BuildContext c) => Container(
+      margin: const EdgeInsets.only(right: 8, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+          color: col.withOpacity(.08), borderRadius: BorderRadius.circular(12)),
+      child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(l,
+                style: const TextStyle(fontSize: 11, color: Colors.black54)),
+            Text(v, style: TextStyle(fontWeight: FontWeight.w800, color: col))
+          ]));
+}
+
+class Inner extends StatelessWidget {
+  final Widget child;
+  const Inner(this.child, {super.key});
+  @override
+  Widget build(BuildContext c) => Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+          color: const Color(0xFFF3F6FA),
+          borderRadius: BorderRadius.circular(16)),
+      child: child);
+}

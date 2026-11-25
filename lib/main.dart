@@ -1,8 +1,8 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 import 'core/api.dart';
 import 'core/ui.dart';
 import 'screens/auth_home.dart';
-import 'screens/journal.dart';
+import 'screens/home.dart';
 import 'screens/accounts.dart';
 import 'screens/more.dart';
 
@@ -50,8 +50,7 @@ class _ShellS extends State<Shell> {
   @override
   Widget build(BuildContext c) {
     final pages = [
-      HomePage(go: (n) => setState(() => i = n)),
-      JournalPage(date: DateTime.now()),
+      const HomePage(),
       const AccountsPage(),
       const HistoryPage(),
       SettingsPage(onLogout: widget.onLogout)
@@ -66,10 +65,6 @@ class _ShellS extends State<Shell> {
                   icon: Icon(Icons.home_outlined),
                   selectedIcon: Icon(Icons.home),
                   label: 'Home'),
-              NavigationDestination(
-                  icon: Icon(Icons.menu_book_outlined),
-                  selectedIcon: Icon(Icons.menu_book),
-                  label: 'Journal'),
               NavigationDestination(
                   icon: Icon(Icons.account_balance_wallet_outlined),
                   selectedIcon: Icon(Icons.account_balance_wallet),

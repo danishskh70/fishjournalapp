@@ -1,46 +1,26 @@
-import 'package:material_ui/material_ui.dart';
-
+import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/ui.dart';
-import 'accounts.dart';
 
 class LoginPage extends StatefulWidget {
   final VoidCallback onDone;
-
   const LoginPage({super.key, required this.onDone});
-
   @override
   State<LoginPage> createState() => _LoginS();
 }
 
 class _LoginS extends State<LoginPage> {
-  final u = TextEditingController();
-  final p = TextEditingController();
-
-  bool busy = false;
-  bool hide = true;
-
+  final u = TextEditingController(), p = TextEditingController();
+  bool busy = false, hide = true;
   Future<void> go() async {
     setState(() => busy = true);
-
     try {
       await Api.login(u.text.trim(), p.text);
-
-      if (mounted) {
-        widget.onDone();
-      }
+      widget.onDone();
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message);
-    } finally {
-      if (mounted) setState(() => busy = false);
     }
-  }
-
-  @override
-  void dispose() {
-    u.dispose();
-    p.dispose();
-    super.dispose();
+    if (mounted) setState(() => busy = false);
   }
 
   @override
@@ -93,9 +73,7 @@ class _LoginS extends State<LoginPage> {
                               icon: Icon(
                                 hide ? Icons.visibility : Icons.visibility_off,
                               ),
-                              onPressed: () {
-                                setState(() => hide = !hide);
-                              },
+                              onPressed: () => setState(() => hide = !hide),
                             ),
                           ),
                         ),
@@ -106,9 +84,8 @@ class _LoginS extends State<LoginPage> {
                               ? const SizedBox(
                                   height: 22,
                                   width: 22,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
                                 )
                               : const Text('Log in'),
                         ),
@@ -120,163 +97,6 @@ class _LoginS extends State<LoginPage> {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-class HomePage extends StatelessWidget {
-  final void Function(int) go;
-
-  const HomePage({super.key, required this.go});
-
-  @override
-  Widget build(BuildContext c) {
-    return Fut(
-      load: () => Api.req(
-        'GET',
-        '/api/v1/dashboard',
-        q: {'business_date': isoDate(DateTime.now())},
-      ),
-      build: (c, d, re) {
-        final journal = d['journal'];
-        final status = journal is Map
-            ? '${journal['status'] ?? 'not_started'}'
-            : 'not_started';
-
-        return RefreshIndicator(
-          onRefresh: () async => re(),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              Grad(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      niceDate(isoDate(DateTime.now())),
-                      style: const TextStyle(color: Colors.white70),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      "Today's Journal",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    Chip(
-                      label: Text(label(status)),
-                      backgroundColor: status == 'open'
-                          ? teal
-                          : status == 'closed'
-                              ? Colors.white
-                              : coral,
-                    ),
-                    const SizedBox(height: 10),
-                    FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: ocean,
-                      ),
-                      onPressed: () => go(1),
-                      child: Text(
-                        status == 'open'
-                            ? 'Continue journal'
-                            : status == 'closed'
-                                ? 'View summary'
-                                : 'Start daily journal',
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: _tot(
-                      'Hotels owe you',
-                      d['hotel_outstanding_total'],
-                      teal,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: _tot(
-                      'You owe suppliers',
-                      d['supplier_outstanding_total'],
-                      coral,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => sheet(c, const PaySheet(hotel: false)),
-                      icon: const Icon(Icons.north_east),
-                      label: const Text('Pay supplier'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: () => sheet(c, const PaySheet(hotel: true)),
-                      icon: const Icon(Icons.south_west),
-                      label: const Text('Hotel paid'),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              if (d is Map)
-                Panel(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Overview',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      KV(d),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _tot(String t, dynamic v, Color col) {
-    return Panel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            t,
-            style: const TextStyle(color: Colors.black54, fontSize: 12),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            inr(v),
-            style: TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.w800,
-              color: col,
-            ),
-          ),
-        ],
       ),
     );
   }

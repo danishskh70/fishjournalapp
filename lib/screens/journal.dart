@@ -1,154 +1,30 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:decimal/decimal.dart';
 import '../core/api.dart';
 import '../core/ui.dart';
+import 'day.dart';
 
 Decimal d(String s) => Decimal.tryParse(s.trim()) ?? Decimal.zero;
 num n(String s) => num.tryParse(s.trim()) ?? 0;
+num num0(dynamic v) => num.tryParse('${v ?? 0}') ?? 0;
+List L(dynamic x) => x is List ? x : [];
+List stockRows(Map j) => L((j['stock'] as Map?)?['rows']);
+bool openingDone(Map j) =>
+    stockRows(j).any((r) => r['opening_confirmed'] == true) ||
+    '${j['status']}' == 'closed';
 
-class JournalPage extends StatefulWidget {
-  final DateTime date;
-  const JournalPage({super.key, required this.date});
-  @override
-  State<JournalPage> createState() => _JS();
-}
-
-class _JS extends State<JournalPage> {
-  Map? j;
-  bool busy = true;
-  String? err;
-  int v = 0;
-  String get ds => isoDate(widget.date);
-  @override
-  void initState() {
-    super.initState();
-    load();
-  }
-
-  Future<void> load() async {
-    setState(() {
-      busy = true;
-      err = null;
-    });
-    try {
-      j = await Api.req('GET', '/api/v1/journals/by-date/$ds');
-    } on ApiException catch (e) {
-      if (e.code == 404) {
-        j = null;
-      } else {
-        err = e.message;
-      }
-    }
-    if (mounted) {
-      setState(() {
-        busy = false;
-        v++;
-      });
-    }
-  }
-
-  Future<void> start() async {
-    try {
-      await Api.req('POST', '/api/v1/journals', body: {'business_date': ds});
-      await load();
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
-    }
-  }
-
-  @override
-  Widget build(BuildContext c) {
-    if (busy) return const Center(child: CircularProgressIndicator());
-    if (err != null) {
-      return Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(err!),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: load, child: const Text('Retry'))
-      ]));
-    }
-    if (j == null) {
-      return Center(
-          child: Padding(
-              padding: const EdgeInsets.all(24),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.menu_book, size: 64, color: teal),
-                const SizedBox(height: 12),
-                Text('No journal for ${niceDate(ds)}',
-                    style: const TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w600)),
-                const SizedBox(height: 16),
-                FilledButton(
-                    onPressed: start, child: const Text('Start daily journal'))
-              ])));
-    }
-    final closed = '${j!['status']}' == 'closed';
-    final jid = j!['id'] as int;
-    return DefaultTabController(
-        length: 4,
-        child: Column(children: [
-          Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Grad(
-                  child: Row(children: [
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text(niceDate(ds),
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.w700)),
-                      Text(closed ? 'Closed (read-only)' : 'Open',
-                          style: const TextStyle(color: Colors.white70))
-                    ])),
-                Icon(closed ? Icons.lock : Icons.edit_note, color: Colors.white)
-              ]))),
-          const TabBar(
-              isScrollable: true,
-              tabAlignment: TabAlignment.start,
-              tabs: [
-                Tab(text: 'Opening'),
-                Tab(text: 'Purchases'),
-                Tab(text: 'Hotel sales'),
-                Tab(text: 'Close')
-              ]),
-          Expanded(
-              child: TabBarView(key: ValueKey(v), children: [
-            OpeningTab(j: j!, ro: closed, done: load),
-            TxTab(
-                path: '/api/v1/purchases',
-                jid: jid,
-                ro: closed,
-                done: load,
-                sale: false),
-            TxTab(
-                path: '/api/v1/hotel-sales',
-                jid: jid,
-                ro: closed,
-                done: load,
-                sale: true),
-            CloseTab(jid: jid, closed: closed, j: j!, done: load)
-          ]))
-        ]));
-  }
-}
-
-class OpeningTab extends StatefulWidget {
+class OpeningScreen extends StatefulWidget {
   final Map j;
-  final bool ro;
-  final VoidCallback done;
-  const OpeningTab(
-      {super.key, required this.j, required this.ro, required this.done});
+  const OpeningScreen({super.key, required this.j});
   @override
-  State<OpeningTab> createState() => _OS();
+  State<OpeningScreen> createState() => _OSt();
 }
 
-class _OS extends State<OpeningTab> {
+class _OSt extends State<OpeningScreen> {
   List fish = [];
   final cs = <int, TextEditingController>{};
-  final prev = <int, dynamic>{};
+  final prev = <int, String>{};
+  final sel = <int>[];
   bool ok = false;
   @override
   void initState() {
@@ -158,183 +34,122 @@ class _OS extends State<OpeningTab> {
 
   Future<void> init() async {
     fish = await fetch('/api/v1/fish');
-    final stock = widget.j['stock'];
-    final items = stock is Map ? asList(stock['rows']) : <dynamic>[];
-
+    final rows = stockRows(widget.j);
     for (final f in fish) {
-      final it = items.cast<dynamic>().firstWhere(
-          (e) => e is Map && e['fish_id'] == f['id'],
-          orElse: () => null);
-
-      final previous = it is Map ? it['previous_closing'] : null;
-      final confirmed = it is Map && it['opening_confirmed'] == true;
-
-      final opening = it is Map
-          ? (confirmed
-              ? it['opening_quantity']
-              : it['suggested_opening'] ?? it['opening_quantity'])
-          : null;
-
-      prev[f['id']] = previous;
-
-      // A first journal can start at zero. Otherwise, do not silently
-      // replace a missing suggested quantity with zero.
-      final initial = opening ?? (previous == null ? '0' : '');
-
-      cs[f['id']] = TextEditingController(text: '$initial');
+      final id = f['id'] as int;
+      final r = rows
+          .cast<dynamic>()
+          .firstWhere((x) => x['fish_id'] == id, orElse: () => null);
+      final q = r == null
+          ? 0
+          : num0(r['opening_confirmed'] == true
+              ? r['opening_quantity']
+              : r['suggested_opening']);
+      cs[id] = TextEditingController(text: q > 0 ? '$q' : '');
+      prev[id] = '${r?['previous_closing'] ?? 0}';
+      if (q > 0) sel.add(id);
     }
     if (mounted) setState(() => ok = true);
   }
 
+  String nm(int id) => '${fish.firstWhere((f) => f['id'] == id)['name']}';
+  Future<void> add() async {
+    final q = TextEditingController();
+    final id = await showModalBottomSheet<int>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: const Color(0xFFF3F6FA),
+        builder: (c) => StatefulBuilder(
+            builder: (c, st) => Padding(
+                padding: EdgeInsets.fromLTRB(
+                    16, 16, 16, MediaQuery.of(c).viewInsets.bottom + 16),
+                child: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  TextField(
+                      controller: q,
+                      onChanged: (_) => st(() {}),
+                      decoration: const InputDecoration(
+                          labelText: 'Search fish',
+                          prefixIcon: Icon(Icons.search))),
+                  const SizedBox(height: 12),
+                  for (final f in fish.where((f) =>
+                      !sel.contains(f['id']) &&
+                      '${f['name']}'
+                          .toLowerCase()
+                          .contains(q.text.toLowerCase())))
+                    Panel(
+                        onTap: () => Navigator.pop(c, f['id'] as int),
+                        child: Row(children: [
+                          const Icon(Icons.set_meal, color: teal),
+                          const SizedBox(width: 12),
+                          Text('${f['name']}',
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w600))
+                        ]))
+                ])))));
+    if (id != null) setState(() => sel.add(id));
+  }
+
   Future<void> save() async {
-    final missing =
-        fish.where((f) => cs[f['id']]!.text.trim().isEmpty).toList();
-
-    if (missing.isNotEmpty) {
-      toast(context, 'Enter opening stock for every fish');
-      return;
-    }
-
-    final invalid = fish.where((f) {
-      final value = num.tryParse(cs[f['id']]!.text.trim());
-      return value == null || value < 0;
-    }).toList();
-
-    if (invalid.isNotEmpty) {
-      toast(context, 'Opening stock must be zero or greater');
-      return;
-    }
-
     try {
       await Api.req('PUT', '/api/v1/journals/${widget.j['id']}/opening-stock',
           body: {
             'items': [
               for (final f in fish)
-                {'fish_id': f['id'], 'quantity': n(cs[f['id']]!.text)}
+                {
+                  'fish_id': f['id'],
+                  'quantity': sel.contains(f['id']) ? n(cs[f['id']]!.text) : 0
+                }
             ]
           });
-      if (mounted) toast(context, 'Opening stock confirmed');
-      widget.done();
+      if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message);
     }
   }
 
   @override
-  Widget build(BuildContext c) {
-    if (!ok) return const Center(child: CircularProgressIndicator());
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      const Text('Check the real stock in the shop, then confirm.',
-          style: TextStyle(color: Colors.black54)),
-      const SizedBox(height: 12),
-      for (final f in fish)
-        Panel(
-            child: Row(children: [
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text('${f['name']}',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700, fontSize: 16)),
-                Text('Yesterday closing: ${kg(prev[f['id']])}',
-                    style: const TextStyle(color: Colors.black54, fontSize: 12))
-              ])),
-          SizedBox(
-              width: 120,
-              child: widget.ro
-                  ? Text(cs[f['id']]!.text)
-                  : numField(cs[f['id']]!, 'kg'))
-        ])),
-      if (!widget.ro)
-        FilledButton(
-            onPressed: save, child: const Text('Confirm opening stock'))
-    ]);
-  }
-}
-
-class TxTab extends StatelessWidget {
-  final String path;
-  final int jid;
-  final bool ro, sale;
-  final VoidCallback done;
-  const TxTab(
-      {super.key,
-      required this.path,
-      required this.jid,
-      required this.ro,
-      required this.done,
-      required this.sale});
-  @override
   Widget build(BuildContext c) => Scaffold(
-      backgroundColor: Colors.transparent,
-      floatingActionButton: ro
-          ? null
-          : FloatingActionButton.extended(
-              backgroundColor: ocean,
-              foregroundColor: Colors.white,
-              onPressed: () async {
-                if (await sheet<bool>(c, TxForm(jid: jid, sale: sale)) ==
-                    true) {
-                  done();
-                }
-              },
-              icon: const Icon(Icons.add),
-              label: Text(sale ? 'Add sale' : 'Add purchase')),
-      body: Fut(
-          load: () => fetch(path, q: {'journal_id': '$jid'}),
-          build: (c, data, re) {
-            final l = data as List;
-            if (l.isEmpty) {
-              return Center(
-                  child:
-                      Text(sale ? 'No hotel sales yet' : 'No purchases yet'));
-            }
-            return ListView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 90),
-                children: [
-                  for (final e in l)
-                    Panel(
-                        child: Row(children: [
-                      Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                            Text(
-                                '${pick(e, [
-                                          sale ? 'hotel_name' : 'supplier_name',
-                                          'name'
-                                        ]) ?? ''} • ${pick(e, ['fish_name']) ?? ''}',
-                                style: const TextStyle(fontWeight: FontWeight.w700)),
-                            Text('${kg(e['quantity'])} × ${inr(e['rate'])}'),
-                            if (!sale)
-                              Text(
-                                  'Paid ${inr(e['paid_now'])} • Due ${inr(pick(e, [
-                                        'due_created',
-                                        'due'
-                                      ]))}',
-                                  style: const TextStyle(color: coral))
-                          ])),
-                      Text(inr(pick(e, ['amount', 'total_amount'])),
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 16)),
-                      if (!ro)
-                        IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            onPressed: () async {
-                              if (!await confirm(c, 'Delete this entry?')) {
-                                return;
-                              }
-                              try {
-                                await Api.req('DELETE', '$path/${e['id']}');
-                                done();
-                              } on ApiException catch (x) {
-                                if (c.mounted) toast(c, x.message);
-                              }
-                            })
-                    ]))
-                ]);
-          }));
+      appBar: AppBar(title: const Text('Opening stock')),
+      body: !ok
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(padding: const EdgeInsets.all(16), children: [
+              const Text(
+                  "Select today's fish and enter the kg you really have.",
+                  style: TextStyle(color: Colors.black54)),
+              const SizedBox(height: 12),
+              for (final id in sel)
+                Panel(
+                    child: Column(children: [
+                  Row(children: [
+                    const Icon(Icons.set_meal, color: teal),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Text(nm(id),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 17))),
+                    IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => setState(() => sel.remove(id)))
+                  ]),
+                  Row(children: [
+                    Expanded(
+                        child: Tile('Yesterday closing', kg(prev[id]),
+                            col: Colors.black54)),
+                    SizedBox(width: 130, child: numField(cs[id]!, 'Today kg'))
+                  ])
+                ])),
+              OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(54)),
+                  onPressed: add,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Add fish')),
+              const SizedBox(height: 12),
+              FilledButton(
+                  onPressed: sel.isEmpty ? null : save,
+                  child: const Text('Confirm opening stock'))
+            ]));
 }
 
 class TxForm extends StatefulWidget {
@@ -404,7 +219,7 @@ class _TF extends State<TxForm> {
             'quantity': n(q.text),
             'rate': n(r.text),
             'paid_now': n(paid.text),
-            'payment_mode': mode
+            if (n(paid.text) > 0) 'payment_mode': mode
           };
     try {
       await Api.req(
@@ -471,27 +286,24 @@ class _TF extends State<TxForm> {
   }
 }
 
-class CloseTab extends StatefulWidget {
-  final int jid;
-  final bool closed;
+class CloseScreen extends StatefulWidget {
   final Map j;
-  final VoidCallback done;
-  const CloseTab(
-      {super.key,
-      required this.jid,
-      required this.closed,
-      required this.j,
-      required this.done});
+  const CloseScreen({super.key, required this.j});
   @override
-  State<CloseTab> createState() => _CS();
+  State<CloseScreen> createState() => _CS();
 }
 
-class _CS extends State<CloseTab> {
+class _CS extends State<CloseScreen> {
   List fish = [];
   final cs = <int, TextEditingController>{};
   final cash = TextEditingController(), upi = TextEditingController();
   Map? prev;
   Map<String, dynamic>? body;
+  late final Set<int> ids = {
+    for (final r in stockRows(widget.j))
+      if (num0(r['opening_quantity']) > 0 || num0(r['purchased']) > 0)
+        r['fish_id'] as int
+  };
   @override
   void initState() {
     super.initState();
@@ -503,53 +315,22 @@ class _CS extends State<CloseTab> {
         }));
   }
 
-  Map<String, dynamic> build_() => {
+  Map<String, dynamic> make() => {
         'stocks': [
           for (final f in fish)
-            {'fish_id': f['id'], 'quantity': n(cs[f['id']]!.text)}
+            {
+              'fish_id': f['id'],
+              'quantity': ids.contains(f['id']) ? n(cs[f['id']]!.text) : 0
+            }
         ],
         'cash_amount': n(cash.text),
         'upi_amount': n(upi.text)
       };
   Future<void> preview() async {
-    if (cash.text.trim().isEmpty || upi.text.trim().isEmpty) {
-      toast(context, 'Enter cash and UPI amounts. Use 0 if none.');
-      return;
-    }
-
-    final moneyInvalid = [cash.text, upi.text].any((text) {
-      final value = num.tryParse(text.trim());
-      return value == null || value < 0;
-    });
-
-    if (moneyInvalid) {
-      toast(context, 'Cash and UPI amounts must be zero or greater');
-      return;
-    }
-
-    final missing =
-        fish.where((f) => cs[f['id']]!.text.trim().isEmpty).toList();
-
-    if (missing.isNotEmpty) {
-      toast(context,
-          'Enter remaining stock for every fish. Use 0 if none remains.');
-      return;
-    }
-
-    final invalid = fish.where((f) {
-      final value = num.tryParse(cs[f['id']]!.text.trim());
-      return value == null || value < 0;
-    }).toList();
-
-    if (invalid.isNotEmpty) {
-      toast(context, 'Remaining stock must be zero or greater');
-      return;
-    }
-
-    final b = build_();
+    final b = make();
     try {
       final r = await Api.req(
-          'POST', '/api/v1/journals/${widget.jid}/close-preview',
+          'POST', '/api/v1/journals/${widget.j['id']}/close-preview',
           body: b);
       setState(() {
         prev = r;
@@ -561,229 +342,82 @@ class _CS extends State<CloseTab> {
   }
 
   Future<void> close() async {
-    if (!await confirm(context, 'Close this journal? It becomes read-only.')) {
+    if (!await confirm(context, "Close today's business? It will be locked."))
       return;
-    }
     try {
-      await Api.req('POST', '/api/v1/journals/${widget.jid}/close', body: body);
-      widget.done();
+      await Api.req('POST', '/api/v1/journals/${widget.j['id']}/close',
+          body: body);
+      if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message);
     }
   }
 
-  Widget _section(String title, List<Widget> children) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Panel(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 16,
-              ),
-            ),
-            const SizedBox(height: 8),
-            ...children,
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _metric(String title, dynamic value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(title, style: const TextStyle(color: Colors.black54)),
-          ),
-          Text(
-            '$value',
-            style: const TextStyle(fontWeight: FontWeight.w600),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _record(String title, String detail) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
-          Text(detail, style: const TextStyle(color: Colors.black54)),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext c) {
-    if (widget.closed) {
-      final stock = widget.j['stock'] is Map ? widget.j['stock'] as Map : {};
-      final purchases =
-          widget.j['purchases'] is Map ? widget.j['purchases'] as Map : {};
-      final sales = widget.j['sales'] is Map ? widget.j['sales'] as Map : {};
-      final money = widget.j['money'] is Map ? widget.j['money'] as Map : {};
-      final hotelInfo =
-          widget.j['hotel_info'] is Map ? widget.j['hotel_info'] as Map : {};
-      final supplierInfo = widget.j['supplier_info'] is Map
-          ? widget.j['supplier_info'] as Map
-          : {};
-
-      final stockRows = asList(stock['rows']);
-      final purchaseRows = asList(purchases['entries']);
-      final hotelSales = asList(sales['hotel_sales']);
-      final normalSales = asList(sales['normal_customer']);
-      final hotelPayments = asList(hotelInfo['payments_received']);
-      final supplierPayments = asList(supplierInfo['later_payments']);
-      final purchaseTotals =
-          purchases['totals'] is Map ? purchases['totals'] as Map : {};
-
-      return ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text(
-            niceDate('${widget.j['business_date']}'),
-            style: const TextStyle(
-              fontWeight: FontWeight.w700,
-              fontSize: 20,
-            ),
-          ),
-          const SizedBox(height: 12),
-          _section('Stock summary', [
-            for (final row in stockRows)
-              if (row is Map)
-                _record(
-                  '${row['fish_name']}',
-                  'Opening: ${kg(row['opening_quantity'])}'
-                      '  •  Purchased: ${kg(row['purchased'])}'
-                      '  •  Hotel sold: ${kg(row['hotel_sold'])}'
-                      '  •  Normal sale: ${row['normal_customer'] == null ? '—' : kg(row['normal_customer'])}'
-                      '  •  Remaining: ${row['remaining'] == null ? '—' : kg(row['remaining'])}',
-                ),
-          ]),
-          _section('Purchases', [
-            _metric('Total quantity', kg(purchaseTotals['total_quantity'])),
-            _metric('Total amount', inr(purchaseTotals['total_amount'])),
-            _metric('Paid immediately', inr(purchaseTotals['total_paid_now'])),
-            _metric('Dues created', inr(purchaseTotals['total_due_created'])),
-            for (final item in purchaseRows)
-              if (item is Map)
-                _record(
-                  '${item['supplier_name']} · ${item['fish_name']}',
-                  '${kg(item['quantity'])} × ${inr(item['rate'])}'
-                      ' = ${inr(item['amount'])}'
-                      '  •  Paid: ${inr(item['paid_now'])}'
-                      '  •  Due: ${inr(item['due_created'])}',
-                ),
-          ]),
-          _section('Hotel sales', [
-            _metric('Total quantity', kg(sales['total_hotel_quantity'])),
-            _metric('Total amount', inr(sales['total_hotel_amount'])),
-            for (final item in hotelSales)
-              if (item is Map)
-                _record(
-                  '${item['hotel_name']} · ${item['fish_name']}',
-                  '${kg(item['quantity'])} × ${inr(item['rate'])}'
-                      ' = ${inr(item['amount'])}',
-                ),
-          ]),
-          _section('Normal customer sales', [
-            _metric(
-              'Total quantity',
-              sales['total_normal_customer_quantity'] == null
-                  ? '—'
-                  : kg(sales['total_normal_customer_quantity']),
-            ),
-            for (final item in normalSales)
-              if (item is Map)
-                _metric(
-                  '${item['fish_name']}',
-                  kg(item['quantity']),
-                ),
-          ]),
-          _section('Daily money', [
-            _metric('Cash collected', inr(money['cash_amount'])),
-            _metric('UPI collected', inr(money['upi_amount'])),
-            _metric('Total', inr(money['total'])),
-          ]),
-          _section('Hotel payments received', [
-            _metric('Hotel sales total', inr(hotelInfo['sales_total'])),
-            for (final item in hotelPayments)
-              if (item is Map)
-                _record(
-                  '${item['hotel_name']}',
-                  '${inr(item['amount'])} · ${item['payment_mode']}'
-                      ' · ${item['payment_date']}',
-                ),
-          ]),
-          _section('Supplier payments', [
-            _metric(
-              'Paid immediately',
-              inr(supplierInfo['paid_immediately_total']),
-            ),
-            _metric(
-              'Dues created',
-              inr(supplierInfo['dues_created_total']),
-            ),
-            for (final item in supplierPayments)
-              if (item is Map)
-                _record(
-                  '${item['supplier_name']}',
-                  '${inr(item['amount'])} · ${item['payment_mode']}'
-                      ' · ${item['payment_date']}'
-                      '${item['is_immediate'] == true ? ' · Immediate' : ''}',
-                ),
-          ]),
-        ],
-      );
-    }
-
     final can = prev != null && prev!['can_close'] == true;
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      const Text('Remaining stock in the shop',
-          style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16)),
-      const SizedBox(height: 8),
-      for (final f in fish)
-        Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: numField(cs[f['id']]!, '${f['name']} (kg)',
-                onChanged: (_) => setState(() => prev = null))),
-      numField(cash, 'Cash collected (₹)',
-          onChanged: (_) => setState(() => prev = null)),
-      const SizedBox(height: 10),
-      numField(upi, 'UPI collected (₹)',
-          onChanged: (_) => setState(() => prev = null)),
-      const SizedBox(height: 14),
-      FilledButton.tonal(
-          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(54)),
-          onPressed: preview,
-          child: const Text('Preview closing')),
-      if (prev != null) ...[
-        const SizedBox(height: 14),
-        Panel(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          KV(prev!),
-          for (final e in prev!.values.whereType<List>())
-            for (final it in e) ...[
-              const Divider(),
-              it is Map
-                  ? KV(it)
-                  : Text('$it', style: const TextStyle(color: coral))
-            ]
-        ])),
-        FilledButton(
-            onPressed: can ? close : null, child: const Text('Close journal'))
-      ]
-    ]);
+    void dirty(String _) => setState(() => prev = null);
+    return Scaffold(
+        appBar: AppBar(title: const Text('Close business')),
+        body: ListView(padding: const EdgeInsets.all(16), children: [
+          Panel(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                const Text('Fish left in the shop (kg)',
+                    style:
+                        TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                const SizedBox(height: 10),
+                for (final f in fish.where((f) => ids.contains(f['id'])))
+                  Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: numField(cs[f['id']]!, '${f['name']}',
+                          onChanged: dirty))
+              ])),
+          Panel(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                const Text("Today's money",
+                    style:
+                        TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                const SizedBox(height: 10),
+                numField(cash, 'Cash (₹)', onChanged: dirty),
+                const SizedBox(height: 10),
+                numField(upi, 'UPI (₹)', onChanged: dirty)
+              ])),
+          FilledButton.tonal(
+              style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(54)),
+              onPressed: fish.isEmpty ? null : preview,
+              child: const Text('Check before closing')),
+          if (prev != null) ...[
+            const SizedBox(height: 14),
+            Panel(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(can ? 'Ready to close' : 'Cannot close yet',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                          color: can ? teal : coral)),
+                  const SizedBox(height: 10),
+                  for (final p in L(prev!['problems']))
+                    Inner(Text('$p', style: const TextStyle(color: coral))),
+                  for (final r in stockRows(prev!))
+                    if (fishCard(r) != null) fishCard(r)!,
+                  if (prev!['money'] is Map)
+                    Inner(Row(children: [
+                      Mini('Cash', inr(prev!['money']['cash_amount'])),
+                      Mini('UPI', inr(prev!['money']['upi_amount'])),
+                      Mini('Total', inr(prev!['money']['total']), col: teal)
+                    ]))
+                ])),
+            FilledButton(
+                onPressed: can ? close : null,
+                child: const Text('Close business'))
+          ]
+        ]));
   }
 }

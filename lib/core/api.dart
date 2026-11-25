@@ -42,6 +42,8 @@ class Api {
     await _s.deleteAll();
   }
 
+  static Future<bool> flag(String k) async => await _s.read(key: k) == '1';
+  static Future<void> setFlag(String k) => _s.write(key: k, value: '1');
   static Future<bool> _refresh() async {
     if (_r == null) return false;
     try {
@@ -73,9 +75,8 @@ class Api {
           0, 'Cannot reach the server. Check your internet and try again.');
     }
     if (r.statusCode == 401 && auth) {
-      if (retry && await _refresh()) {
+      if (retry && await _refresh())
         return req(method, path, body: body, q: q, retry: false);
-      }
       onExpired?.call();
       throw ApiException(401, 'Session expired. Please log in again.');
     }
@@ -89,9 +90,8 @@ class Api {
     if (d is Map) {
       final x = d['detail'] ?? d['message'];
       if (x is String) return x;
-      if (x is List) {
+      if (x is List)
         return x.map((e) => e is Map ? '${e['msg']}' : '$e').join('\n');
-      }
     }
     return {
           403: 'Not permitted.',
