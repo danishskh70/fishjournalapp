@@ -36,7 +36,7 @@ class _AppS extends State<App> {
 
   @override
   Widget build(BuildContext c) => MaterialApp(
-      title: 'Fish Journal',
+      title: 'Fish Khata',
       scaffoldMessengerKey: msgKey,
       debugShowCheckedModeBanner: false,
       theme: appTheme(),
@@ -72,14 +72,32 @@ class _ShellS extends State<Shell> {
   Widget build(BuildContext c) => ValueListenableBuilder<int>(
       valueListenable: shellTab,
       builder: (c, i, _) {
-        final pages = <Widget>[const HomePage(), const AccountsPage(), const HistoryPage(), SettingsPage(onLogout: widget.onLogout)];
+        final pages = <Widget>[
+          const HomePage(),
+          const AccountsPage(),
+          const HistoryPage(),
+          SettingsPage(onLogout: widget.onLogout)
+        ];
         return Scaffold(
             body: SafeArea(child: pages[i]),
-            bottomNavigationBar: NavigationBar(selectedIndex: i, onDestinationSelected: (n) => shellTab.value = n, destinations: const [
-              NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'Home'),
-              NavigationDestination(icon: Icon(Icons.account_balance_wallet_outlined), selectedIcon: Icon(Icons.account_balance_wallet), label: 'Accounts'),
-              NavigationDestination(icon: Icon(Icons.history), label: 'History'),
-              NavigationDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: 'Settings'),
-            ]));
+            bottomNavigationBar: NavigationBar(
+                selectedIndex: i,
+                onDestinationSelected: (n) => shellTab.value = n,
+                destinations: const [
+                  NavigationDestination(
+                      icon: Icon(Icons.home_outlined),
+                      selectedIcon: Icon(Icons.home),
+                      label: 'Home'),
+                  NavigationDestination(
+                      icon: Icon(Icons.account_balance_wallet_outlined),
+                      selectedIcon: Icon(Icons.account_balance_wallet),
+                      label: 'Accounts'),
+                  NavigationDestination(
+                      icon: Icon(Icons.history), label: 'History'),
+                  NavigationDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      selectedIcon: Icon(Icons.settings),
+                      label: 'Settings'),
+                ]));
       });
 }
