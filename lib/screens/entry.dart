@@ -41,10 +41,12 @@ class _EF extends State<EntryFlow> {
 
   Future<void> init() async {
     try {
-      final p = await fetch(widget.sale ? '/api/v1/hotels' : '/api/v1/suppliers');
+      final p =
+          await fetch(widget.sale ? '/api/v1/hotels' : '/api/v1/suppliers');
       fish = await fetch('/api/v1/fish');
       final last = await Store.get('lastparty_${widget.sale ? 'sale' : 'buy'}');
-      p.sort((a, b) => (('${b['id']}' == last) ? 1 : 0) - (('${a['id']}' == last) ? 1 : 0));
+      p.sort((a, b) =>
+          (('${b['id']}' == last) ? 1 : 0) - (('${a['id']}' == last) ? 1 : 0));
       parties = p;
       err = null;
     } on ApiException catch (e) {
@@ -53,7 +55,10 @@ class _EF extends State<EntryFlow> {
     if (mounted) setState(() => ready = true);
   }
 
-  String fishName(int id) => '${fish.firstWhere((f) => f['id'] == id, orElse: () => <String, dynamic>{'name': '?'})['name']}';
+  String fishName(int id) =>
+      '${fish.firstWhere((f) => f['id'] == id, orElse: () => <String, dynamic>{
+            'name': '?'
+          })['name']}';
   num effRate(int id) => n(rc[id]?.text ?? '');
   num amt(int id) => r2(n(qc[id]?.text ?? '') * effRate(id));
   num get total => sel.fold<num>(0, (a, id) => a + amt(id));
@@ -80,7 +85,8 @@ class _EF extends State<EntryFlow> {
     if (!widget.sale) {
       // newest rate paid to this supplier for each fish, from the server
       try {
-        final d = await Api.req('GET', '/api/v1/purchases', q: {'supplier_id': '${p['id']}'});
+        final d = await Api.req('GET', '/api/v1/purchases',
+            q: {'supplier_id': '${p['id']}'});
         final best = <int, int>{};
         for (final e in L(M(d)['entries'])) {
           final fid = e['fish_id'] as int, pid = e['id'] as int;
@@ -125,10 +131,14 @@ class _EF extends State<EntryFlow> {
       var d = '', h = '';
       if (widget.sale) {
         d = hotelRates[id] ?? '';
-        h = d.isEmpty ? 'No agreed rate for this hotel. Type the rate.' : 'Agreed rate ₹$d. Change only for this sale.';
+        h = d.isEmpty
+            ? 'No agreed rate for this hotel. Type the rate.'
+            : 'Agreed rate ₹$d. Change only for this sale.';
       } else {
         d = lastRate[id] ?? '';
-        h = d.isEmpty ? 'First time from this supplier. Type rate.' : 'Last rate from this supplier ₹$d';
+        h = d.isEmpty
+            ? 'First time from this supplier. Type rate.'
+            : 'Last rate from this supplier ₹$d';
       }
       rc[id] = TextEditingController(text: d);
       hint[id] = h;
@@ -176,7 +186,13 @@ class _EF extends State<EntryFlow> {
     for (final id in sel) {
       final a = amt(id);
       final rateTxt = fmt(effRate(id));
-      final it = <String, dynamic>{'fish_id': id, 'fish': fishName(id), 'qty': '${n(qc[id]!.text)}', 'st': 'todo', 'err': ''};
+      final it = <String, dynamic>{
+        'fish_id': id,
+        'fish': fishName(id),
+        'qty': '${n(qc[id]!.text)}',
+        'st': 'todo',
+        'err': ''
+      };
       if (widget.sale) {
         final def = hotelRates[id];
         it['rate'] = (def != null && n(def) == effRate(id)) ? null : rateTxt;
@@ -204,95 +220,186 @@ class _EF extends State<EntryFlow> {
     msgKey.currentState?.showSnackBar(SnackBar(
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 3),
-        content: Text('Saving $what for ${party!['name']} in background. You can keep working.')));
+        content: Text(
+            'Saving $what for ${party!['name']} in background. You can keep working.')));
   }
 
   // ---------- stages ----------
   Widget stageParty() {
     if (parties.isEmpty) {
-      return Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(widget.sale ? 'No hotels yet. Add one in Settings > Hotels.' : 'No suppliers yet. Add one in Settings > Suppliers.', textAlign: TextAlign.center)));
+      return Center(
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                  widget.sale
+                      ? 'No hotels yet. Add one in Settings > Hotels.'
+                      : 'No suppliers yet. Add one in Settings > Suppliers.',
+                  textAlign: TextAlign.center)));
     }
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text(widget.sale ? 'Which hotel?' : 'Which supplier?', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+      Text(widget.sale ? 'Which hotel?' : 'Which supplier?',
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
       const SizedBox(height: 12),
       for (final p in parties)
         Panel(
             onTap: () => pickParty(p as Map),
             child: Row(children: [
-              CircleAvatar(backgroundColor: tint(widget.sale ? teal : coral), child: Icon(widget.sale ? Icons.hotel : Icons.local_shipping, color: widget.sale ? teal : coral)),
+              CircleAvatar(
+                  backgroundColor: tint(widget.sale ? teal : coral),
+                  child: Icon(widget.sale ? Icons.hotel : Icons.local_shipping,
+                      color: widget.sale ? teal : coral)),
               const SizedBox(width: 12),
-              Expanded(child: Text('${p['name']}', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 17))),
+              Expanded(
+                  child: Text('${p['name']}',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 17))),
               const Icon(Icons.chevron_right),
             ])),
     ]);
   }
 
   Widget stageFish() => ListView(padding: const EdgeInsets.all(16), children: [
-        Text('Which fish?', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        const Text('Tick all the fish first. Then enter kg and rate one by one.', style: TextStyle(color: Colors.black54)),
+        Text('Which fish?',
+            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const Text(
+            'Tick all the fish first. Then enter kg and rate one by one.',
+            style: TextStyle(color: Colors.black54)),
         const SizedBox(height: 14),
         Wrap(spacing: 8, runSpacing: 8, children: [
           for (final f in fish)
             FilterChip(
-                label: Text('${f['name']}', style: const TextStyle(fontSize: 15)),
+                label:
+                    Text('${f['name']}', style: const TextStyle(fontSize: 15)),
                 selected: sel.contains(f['id']),
                 onSelected: (_) => toggle(f['id'] as int)),
-          if (!widget.sale) ActionChip(avatar: const Icon(Icons.add, size: 18), label: const Text('New fish'), onPressed: addFish),
+          if (!widget.sale)
+            ActionChip(
+                avatar: const Icon(Icons.add, size: 18),
+                label: const Text('New fish'),
+                onPressed: addFish),
         ]),
         if (fish.isEmpty) const EmptyNote('No fish yet. Tap New fish.'),
       ]);
 
-  Widget stageDetail() => ListView(padding: const EdgeInsets.all(16), children: [
-        const Text('Kg and rate', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-        const Text('Fill each fish. Tap the next box on the keyboard to move on.', style: TextStyle(color: Colors.black54)),
+  Widget stageDetail() =>
+      ListView(padding: const EdgeInsets.all(16), children: [
+        const Text('Kg and rate',
+            style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+        const Text(
+            'Fill each fish. Tap the next box on the keyboard to move on.',
+            style: TextStyle(color: Colors.black54)),
         const SizedBox(height: 12),
         for (final id in sel)
           Panel(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Row(children: [
-              Expanded(child: Text(fishName(id), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800))),
-              Text(inr(amt(id)), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-            ]),
-            const SizedBox(height: 10),
-            Row(children: [
-              Expanded(child: numField(qc[id]!, 'Kg', k: ValueKey('q$id'), error: tried && n(qc[id]!.text) <= 0 ? 'Type kg' : null, onChanged: (_) => setState(() {}))),
-              const SizedBox(width: 12),
-              Expanded(child: numField(rc[id]!, 'Rate ₹/kg', k: ValueKey('r$id'), error: tried && effRate(id) <= 0 ? 'Type rate' : null, onChanged: (_) => setState(() {}))),
-            ]),
-            if ((hint[id] ?? '').isNotEmpty) Padding(padding: const EdgeInsets.only(top: 6), child: Text(hint[id]!, style: const TextStyle(color: Colors.black54, fontSize: 12))),
-          ])),
-        Panel(child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total', style: TextStyle(fontWeight: FontWeight.w700)), Text(inr(total), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22))])),
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                Row(children: [
+                  Expanded(
+                      child: Text(fishName(id),
+                          style: const TextStyle(
+                              fontSize: 18, fontWeight: FontWeight.w800))),
+                  Text(inr(amt(id)),
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w800)),
+                ]),
+                const SizedBox(height: 10),
+                Row(children: [
+                  Expanded(
+                      child: numField(qc[id]!, 'Kg',
+                          k: ValueKey('q$id'),
+                          error:
+                              tried && n(qc[id]!.text) <= 0 ? 'Type kg' : null,
+                          onChanged: (_) => setState(() {}))),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: numField(rc[id]!, 'Rate ₹/kg',
+                          k: ValueKey('r$id'),
+                          error: tried && effRate(id) <= 0 ? 'Type rate' : null,
+                          onChanged: (_) => setState(() {}))),
+                ]),
+                if ((hint[id] ?? '').isNotEmpty)
+                  Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(hint[id]!,
+                          style: const TextStyle(
+                              color: Colors.black54, fontSize: 12))),
+              ])),
+        Panel(
+            child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+              const Text('Total',
+                  style: TextStyle(fontWeight: FontWeight.w700)),
+              Text(inr(total),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 22))
+            ])),
       ]);
 
   Widget stageReview() {
     final t = total;
     final p = r2(n(paid.text));
     return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('${party!['name']}', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
-      const Text('Check and save. Tap a fish to change it.', style: TextStyle(color: Colors.black54)),
+      Text('${party!['name']}',
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800)),
+      const Text('Check and save. Tap a fish to change it.',
+          style: TextStyle(color: Colors.black54)),
       const SizedBox(height: 12),
       for (var i = 0; i < sel.length; i++)
         Panel(
             onTap: () => setState(() => stage = 2),
             child: Row(children: [
               Expanded(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(fishName(sel[i]), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                Text('${qty(n(qc[sel[i]]!.text))} kg × ${inr(effRate(sel[i]))}', style: const TextStyle(color: Colors.black54)),
-              ])),
-              Text(inr(amt(sel[i])), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-              IconButton(tooltip: 'Remove', icon: const Icon(Icons.delete_outline), onPressed: () => removeAt(i)),
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text(fishName(sel[i]),
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w800, fontSize: 16)),
+                    Text(
+                        '${qty(n(qc[sel[i]]!.text))} kg × ${inr(effRate(sel[i]))}',
+                        style: const TextStyle(color: Colors.black54)),
+                  ])),
+              Text(inr(amt(sel[i])),
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, fontSize: 16)),
+              IconButton(
+                  tooltip: 'Remove',
+                  icon: const Icon(Icons.delete_outline),
+                  onPressed: () => removeAt(i)),
             ])),
-      Panel(child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Total', style: TextStyle(fontWeight: FontWeight.w700)), Text(inr(t), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22))])),
+      Panel(
+          child:
+              Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        const Text('Total', style: TextStyle(fontWeight: FontWeight.w700)),
+        Text(inr(t),
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 22))
+      ])),
       if (!widget.sale) ...[
-        numField(paid, 'Paid now (₹)', onChanged: (_) => setState(() => paidTouched = true)),
+        numField(paid, 'Paid now (₹)',
+            onChanged: (_) => setState(() => paidTouched = true)),
         const SizedBox(height: 10),
-        SegmentedButton<String>(
-            segments: const [ButtonSegment(value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)), ButtonSegment(value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))],
-            selected: {mode},
-            onSelectionChanged: (s) => setState(() => mode = s.first)),
+        SegmentedButton<String>(segments: const [
+          ButtonSegment(
+              value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)),
+          ButtonSegment(
+              value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))
+        ], selected: {
+          mode
+        }, onSelectionChanged: (s) => setState(() => mode = s.first)),
         const SizedBox(height: 10),
-        Panel(child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Pending to supplier'), Text(inr(r2(t - p)), style: TextStyle(color: t - p > 0 ? coral : teal, fontWeight: FontWeight.w800, fontSize: 18))])),
+        Panel(
+            child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+              const Text('Pending to supplier'),
+              Text(inr(r2(t - p)),
+                  style: TextStyle(
+                      color: t - p > 0 ? coral : teal,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 18))
+            ])),
       ],
     ]);
   }
@@ -301,13 +408,19 @@ class _EF extends State<EntryFlow> {
     if (stage == 0) return null;
     Widget btn;
     if (stage == 1) {
-      btn = FilledButton(onPressed: sel.isEmpty ? null : toDetails, child: Text(sel.isEmpty ? 'Tick fish' : 'Next (${sel.length} fish)'));
+      btn = FilledButton(
+          onPressed: sel.isEmpty ? null : toDetails,
+          child: Text(sel.isEmpty ? 'Tick fish' : 'Next (${sel.length} fish)'));
     } else if (stage == 2) {
       btn = FilledButton(onPressed: next, child: const Text('Review'));
     } else {
-      btn = FilledButton(onPressed: sel.isEmpty ? null : save, child: Text(widget.sale ? 'Save sale' : 'Save purchase'));
+      btn = FilledButton(
+          onPressed: sel.isEmpty ? null : save,
+          child: Text(widget.sale ? 'Save sale' : 'Save purchase'));
     }
-    return SafeArea(child: Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 12), child: btn));
+    return SafeArea(
+        child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12), child: btn));
   }
 
   @override
@@ -316,7 +429,21 @@ class _EF extends State<EntryFlow> {
     if (!ready) {
       body = const Center(child: CircularProgressIndicator());
     } else if (err != null) {
-      body = Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(err!, textAlign: TextAlign.center), const SizedBox(height: 12), FilledButton(onPressed: () { setState(() { ready = false; }); init(); }, child: const Text('Retry'))])));
+      body = Center(
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                Text(err!, textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        ready = false;
+                      });
+                      init();
+                    },
+                    child: const Text('Retry'))
+              ])));
     } else if (stage == 0) {
       body = stageParty();
     } else if (stage == 1) {
@@ -332,7 +459,9 @@ class _EF extends State<EntryFlow> {
           if (!didPop) back();
         },
         child: Scaffold(
-            appBar: AppBar(title: Text(party == null ? what : '$what • ${party!['name']}')),
+            appBar: AppBar(
+                title:
+                    Text(party == null ? what : '$what • ${party!['name']}')),
             bottomNavigationBar: ready && err == null ? bottom() : null,
             body: body));
   }

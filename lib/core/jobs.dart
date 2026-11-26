@@ -86,11 +86,14 @@ class Jobs extends ChangeNotifier {
   Future<bool> _exists(Map j, Map it) async {
     final sale = j['kind'] == 'sale';
     final k = sale ? 'hotel_id' : 'supplier_id';
-    final d = await Api.req('GET', sale ? '/api/v1/hotel-sales' : '/api/v1/purchases', q: {'journal_id': '${j['journal_id']}', k: '${j['party_id']}'});
+    final d = await Api.req(
+        'GET', sale ? '/api/v1/hotel-sales' : '/api/v1/purchases',
+        q: {'journal_id': '${j['journal_id']}', k: '${j['party_id']}'});
     for (final e in L(d is Map ? d['entries'] : d)) {
       if (e['fish_id'] == it['fish_id'] &&
           (nz(e['quantity']) - nz(it['qty'])).abs() < 0.0001 &&
-          (it['rate'] == null || (nz(e['rate']) - nz(it['rate'])).abs() < 0.0001)) {
+          (it['rate'] == null ||
+              (nz(e['rate']) - nz(it['rate'])).abs() < 0.0001)) {
         return true;
       }
     }
@@ -113,7 +116,9 @@ class Jobs extends ChangeNotifier {
         }
         it['st'] = 'sending';
         await _save();
-        await Api.req('POST', sale ? '/api/v1/hotel-sales' : '/api/v1/purchases', body: _body(j, it));
+        await Api.req(
+            'POST', sale ? '/api/v1/hotel-sales' : '/api/v1/purchases',
+            body: _body(j, it));
         it['st'] = 'done';
         it['err'] = '';
         await _save();
@@ -121,7 +126,9 @@ class Jobs extends ChangeNotifier {
         if (e.code == 0 || e.code == 401 || e.code >= 500) {
           if (it['st'] == 'sending') it['st'] = 'unsure';
           j['status'] = 'waiting';
-          j['note'] = e.code == 401 ? 'Please log in again. Entries are safe on the phone.' : 'No connection. Entries are safe on the phone and will be sent again.';
+          j['note'] = e.code == 401
+              ? 'Please log in again. Entries are safe on the phone.'
+              : 'No connection. Entries are safe on the phone and will be sent again.';
           await _save();
           notifyListeners();
           return false;
@@ -191,19 +198,41 @@ class JobTray extends StatelessWidget {
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             if (running)
-              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
             else
-              Icon(failed ? Icons.error_outline : Icons.cloud_upload_outlined, color: failed ? coral : ocean),
+              Icon(failed ? Icons.error_outline : Icons.cloud_upload_outlined,
+                  color: failed ? coral : ocean),
             const SizedBox(width: 10),
-            Expanded(child: Text('$what • ${j['party']} • $done of ${items.length} saved', style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(
+                child: Text(
+                    '$what • ${j['party']} • $done of ${items.length} saved',
+                    style: const TextStyle(fontWeight: FontWeight.w700))),
           ]),
           if (failed)
-            for (final x in bad) Padding(padding: const EdgeInsets.only(top: 4), child: Text('${x['fish']}: ${x['err']}', style: const TextStyle(color: coral, fontSize: 13))),
-          if (!failed && !running && note.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(note, style: const TextStyle(color: Colors.black54, fontSize: 13))),
+            for (final x in bad)
+              Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text('${x['fish']}: ${x['err']}',
+                      style: const TextStyle(color: coral, fontSize: 13))),
+          if (!failed && !running && note.isNotEmpty)
+            Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(note,
+                    style:
+                        const TextStyle(color: Colors.black54, fontSize: 13))),
           if (!running)
             Row(children: [
-              TextButton(onPressed: () => failed ? Jobs.i.retryFailed(j) : Jobs.i.kick(), child: Text(failed ? 'Retry failed' : 'Send now')),
-              if (failed) TextButton(onPressed: () => Jobs.i.dismiss(j), child: const Text('Dismiss')),
+              TextButton(
+                  onPressed: () =>
+                      failed ? Jobs.i.retryFailed(j) : Jobs.i.kick(),
+                  child: Text(failed ? 'Retry failed' : 'Send now')),
+              if (failed)
+                TextButton(
+                    onPressed: () => Jobs.i.dismiss(j),
+                    child: const Text('Dismiss')),
             ]),
         ]));
   }
@@ -213,6 +242,8 @@ class JobTray extends StatelessWidget {
       animation: Jobs.i,
       builder: (c, _) {
         if (Jobs.i.list.isEmpty) return const SizedBox.shrink();
-        return Column(children: [for (final j in List<Map<String, dynamic>>.from(Jobs.i.list)) _card(j)]);
+        return Column(children: [
+          for (final j in List<Map<String, dynamic>>.from(Jobs.i.list)) _card(j)
+        ]);
       });
 }

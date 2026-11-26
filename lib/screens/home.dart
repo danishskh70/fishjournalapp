@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
+import '../core/cache.dart';
 import '../core/jobs.dart';
 import '../core/store.dart';
 import '../core/ui.dart';
 import 'close.dart';
 import 'opening.dart';
-import 'pay.dart';
 import 'sheet.dart';
 import 'work.dart';
 
@@ -27,18 +27,22 @@ class _HS extends State<HomePage> {
   Map? get jn => dash == null ? null : dash!['journal'] as Map?;
   bool get closed => jn != null && '${jn!['status']}' == 'closed';
   List get stock => L(dash?['stock_overview']);
-  bool get openingDone => jn != null && (closed || stock.any((r) => r['opening_confirmed'] == true));
+  bool get openingDone =>
+      jn != null &&
+      (closed || stock.any((r) => r['opening_confirmed'] == true));
 
   Map? get prevOpen {
     for (final h in hist) {
-      if ('${h['status']}' != 'closed' && '${h['business_date']}' != ds) return h as Map;
+      if ('${h['status']}' != 'closed' && '${h['business_date']}' != ds)
+        return h as Map;
     }
     return null;
   }
 
   Map? get lastClosed {
     for (final h in hist) {
-      if ('${h['status']}' == 'closed' && '${h['business_date']}' != ds) return h as Map;
+      if ('${h['status']}' == 'closed' && '${h['business_date']}' != ds)
+        return h as Map;
     }
     return null;
   }
@@ -47,24 +51,77 @@ class _HS extends State<HomePage> {
   void initState() {
     super.initState();
     Jobs.i.tick.addListener(_tick);
+    DataCache.i.addListener(_cacheChanged);
     load();
   }
 
   @override
   void dispose() {
     Jobs.i.tick.removeListener(_tick);
+    DataCache.i.removeListener(_cacheChanged);
     super.dispose();
+  }
+
+  void _cacheChanged() {
+    final dashboardKey = 'dashboard:$ds';
+    const historyKey = 'history:6:0';
+
+    final d = DataCache.i.peek(dashboardKey);
+    final h = DataCache.i.peek(historyKey);
+
+    if (d is Map) dash = d;
+    if (h is List) hist = h;
+
+    if (!mounted) return;
+
+    setState(() {});
+
+    final dashboardStale =
+        DataCache.i.has(dashboardKey) && DataCache.i.isStale(dashboardKey);
+    final historyStale =
+        DataCache.i.has(historyKey) && DataCache.i.isStale(historyKey);
+
+    if (dashboardStale || historyStale) {
+      load(quiet: true);
+    }
   }
 
   void _tick() {
     if (mounted) load(quiet: true);
   }
 
-  Future<void> load({bool quiet = false}) async {
-    if (!quiet) setState(() { busy = true; err = null; });
+  Future<void> refresh() async {
     try {
-      final d = await Api.req('GET', '/api/v1/dashboard', q: {'business_date': ds});
-      final h = await fetch('/api/v1/history', q: {'limit': '6', 'offset': '0'});
+      await Future.wait([
+        DataCache.i.load(
+          'dashboard:$ds',
+          () => Api.req('GET', '/api/v1/dashboard', q: {'business_date': ds}),
+        ),
+        DataCache.i.load(
+          'history:6:0',
+          () => fetch('/api/v1/history', q: {'limit': '6', 'offset': '0'}),
+        ),
+      ]);
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+    }
+  }
+
+  Future<void> load({bool quiet = false}) async {
+    if (!quiet)
+      setState(() {
+        busy = true;
+        err = null;
+      });
+    try {
+      final d = await DataCache.i.cached(
+        'dashboard:$ds',
+        () => Api.req('GET', '/api/v1/dashboard', q: {'business_date': ds}),
+      );
+      final h = await DataCache.i.cached(
+        'history:6:0',
+        () => fetch('/api/v1/history', q: {'limit': '6', 'offset': '0'}),
+      );
       dash = d as Map;
       hist = h;
       shop = (await Store.get('shop')) ?? '';
@@ -81,12 +138,17 @@ class _HS extends State<HomePage> {
   Future<void> _maybeResume() async {
     if (_resumed) return;
     _resumed = true;
-    if (jn != null && openingDone && !closed && (await Store.get('resume')) == '1' && mounted) {
+    if (jn != null &&
+        openingDone &&
+        !closed &&
+        (await Store.get('resume')) == '1' &&
+        mounted) {
       openWork();
     }
   }
 
-  Future<T?> push<T>(Widget w) => Navigator.push<T>(context, MaterialPageRoute<T>(builder: (_) => w));
+  Future<T?> push<T>(Widget w) =>
+      Navigator.push<T>(context, MaterialPageRoute<T>(builder: (_) => w));
 
   Future<void> openWork({String? date}) async {
     await push(WorkScreen(date: date ?? ds));
@@ -98,14 +160,16 @@ class _HS extends State<HomePage> {
     if (mounted) load(quiet: true);
   }
 
-  Future<void> pay(bool hotel) async {
-    await push(PayScreen(hotel: hotel));
-    if (mounted) load(quiet: true);
-  }
-
   Future<Map?> _today() async {
     try {
-      return await Api.req('GET', '/api/v1/journals/by-date/$ds') as Map;
+      final key = 'journal:$ds';
+      final fetch = () => Api.req('GET', '/api/v1/journals/by-date/$ds');
+
+      if (DataCache.i.has(key) && !DataCache.i.isStale(key)) {
+        return await DataCache.i.cached(key, fetch) as Map;
+      }
+
+      return await DataCache.i.load(key, fetch) as Map;
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message);
       return null;
@@ -152,8 +216,11 @@ class _HS extends State<HomePage> {
     String sub = '';
     Widget? second;
     if (jn == null && prev != null) {
-      final yest = '${prev['business_date']}' == isoDate(DateTime.now().subtract(const Duration(days: 1)));
-      title = yest ? "Yesterday isn't closed" : '${niceDate('${prev['business_date']}')} is not closed';
+      final yest = '${prev['business_date']}' ==
+          isoDate(DateTime.now().subtract(const Duration(days: 1)));
+      title = yest
+          ? "Yesterday isn't closed"
+          : '${niceDate('${prev['business_date']}')} is not closed';
       sub = 'Close it first. Then start today.';
       btn = 'Open that day';
       on = () => openWork(date: '${prev['business_date']}');
@@ -171,7 +238,10 @@ class _HS extends State<HomePage> {
       sub = 'Record purchases and hotel sales.';
       btn = 'Continue Business';
       on = () => openWork();
-      second = TextButton(onPressed: endDay, child: const Text('End of Day', style: TextStyle(color: Colors.white)));
+      second = TextButton(
+          onPressed: endDay,
+          child:
+              const Text('End of Day', style: TextStyle(color: Colors.white)));
     } else {
       title = 'Business closed';
       sub = 'Today is saved.';
@@ -180,10 +250,19 @@ class _HS extends State<HomePage> {
     }
     return Grad(
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title, style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800)),
-      if (sub.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(sub, style: const TextStyle(color: Colors.white70))),
+      Text(title,
+          style: const TextStyle(
+              color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800)),
+      if (sub.isNotEmpty)
+        Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(sub, style: const TextStyle(color: Colors.white70))),
       const SizedBox(height: 16),
-      FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: ocean), onPressed: on, child: Text(btn)),
+      FilledButton(
+          style: FilledButton.styleFrom(
+              backgroundColor: Colors.white, foregroundColor: ocean),
+          onPressed: on,
+          child: Text(btn)),
       if (second != null) Center(child: second),
     ]));
   }
@@ -194,20 +273,29 @@ class _HS extends State<HomePage> {
             accTab.value = tab;
             shellTab.value = 1;
           },
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(t, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(t,
+                style: const TextStyle(color: Colors.black54, fontSize: 12)),
             const SizedBox(height: 6),
-            Text(inr(v), style: TextStyle(color: col, fontWeight: FontWeight.w800, fontSize: 22)),
+            Text(inr(v),
+                style: TextStyle(
+                    color: col, fontWeight: FontWeight.w800, fontSize: 22)),
           ])));
 
   Widget act(String t, IconData i, Color col, VoidCallback on) => Expanded(
       child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: col), onPressed: on, icon: Icon(i), label: Text(t))));
+          child: FilledButton.icon(
+              style: FilledButton.styleFrom(backgroundColor: col),
+              onPressed: on,
+              icon: Icon(i),
+              label: Text(t))));
 
   @override
   Widget build(BuildContext c) {
-    if (busy && dash == null) return const Center(child: CircularProgressIndicator());
+    if (busy && dash == null)
+      return const Center(child: CircularProgressIndicator());
     if (dash == null) {
       return Center(
           child: Padding(
@@ -221,14 +309,17 @@ class _HS extends State<HomePage> {
               ])));
     }
     final h = DateTime.now().hour;
-    final hi = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
+    final hi =
+        h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
     final lc = lastClosed;
     final y = isoDate(DateTime.now().subtract(const Duration(days: 1)));
     final live = stock.where((r) => nz(r['current_stock']) > 0).toList();
     return RefreshIndicator(
-        onRefresh: load,
+        onRefresh: refresh,
         child: ListView(padding: const EdgeInsets.all(16), children: [
-          Text(shop.isEmpty ? hi : '$hi • $shop', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          Text(shop.isEmpty ? hi : '$hi • $shop',
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
           Text(shortDate(ds), style: const TextStyle(color: Colors.black54)),
           const SizedBox(height: 14),
           const JobTray(),
@@ -237,30 +328,43 @@ class _HS extends State<HomePage> {
           Row(children: [
             owe('Hotels owe you', dash!['hotel_outstanding_total'], teal, 0),
             const SizedBox(width: 12),
-            owe('You owe suppliers', dash!['supplier_outstanding_total'], coral, 1),
-          ]),
-          Row(children: [
-            act('Pay Supplier', Icons.north_east, coral, () => pay(false)),
-            act('Hotel Paid', Icons.south_west, teal, () => pay(true)),
+            owe('You owe suppliers', dash!['supplier_outstanding_total'], coral,
+                1),
           ]),
           const SizedBox(height: 16),
           if (openingDone && !closed && live.isNotEmpty)
             Panel(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Sect('Stock now', Icons.inventory_2, teal),
-              Wrap(children: [for (final r in live) Tile('${r['fish_name']}', kg(r['current_stock']))]),
-            ])),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  const Sect('Stock now', Icons.inventory_2, teal),
+                  Wrap(children: [
+                    for (final r in live)
+                      Tile('${r['fish_name']}', kg(r['current_stock']))
+                  ]),
+                ])),
           if (lc != null)
             Panel(
                 onTap: () => openSheet('${lc['business_date']}'),
                 child: Row(children: [
-                  CircleAvatar(backgroundColor: tint(ocean), child: const Icon(Icons.history, color: ocean)),
+                  CircleAvatar(
+                      backgroundColor: tint(ocean),
+                      child: const Icon(Icons.history, color: ocean)),
                   const SizedBox(width: 12),
                   Expanded(
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text('${lc['business_date']}' == y ? "Yesterday's review" : 'Last business day', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
-                    Text('${niceDate('${lc['business_date']}')} • Money ${inr(lc['total_money'])}', style: const TextStyle(color: Colors.black54)),
-                  ])),
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Text(
+                            '${lc['business_date']}' == y
+                                ? "Yesterday's review"
+                                : 'Last business day',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 16)),
+                        Text(
+                            '${niceDate('${lc['business_date']}')} • Money ${inr(lc['total_money'])}',
+                            style: const TextStyle(color: Colors.black54)),
+                      ])),
                   const Icon(Icons.chevron_right),
                 ])),
         ]));

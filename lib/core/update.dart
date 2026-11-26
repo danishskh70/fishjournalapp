@@ -25,19 +25,36 @@ class Updates {
     if (c.mounted) await check(c, manual: false);
   }
 
-  static Future<void> whatsNew(BuildContext c, String v, List<String> notes) => showDialog(
-      context: c,
-      builder: (_) => AlertDialog(
-              title: Text("What's new in $v"),
-              content: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final s in notes) Padding(padding: const EdgeInsets.only(bottom: 6), child: Text('• $s'))])),
-              actions: [FilledButton(style: FilledButton.styleFrom(minimumSize: const Size(100, 44)), onPressed: () => Navigator.pop(c), child: const Text('OK'))]));
+  static Future<void> whatsNew(BuildContext c, String v, List<String> notes) =>
+      showDialog(
+          context: c,
+          builder: (_) => AlertDialog(
+                  title: Text("What's new in $v"),
+                  content: SingleChildScrollView(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        for (final s in notes)
+                          Padding(
+                              padding: const EdgeInsets.only(bottom: 6),
+                              child: Text('• $s'))
+                      ])),
+                  actions: [
+                    FilledButton(
+                        style: FilledButton.styleFrom(
+                            minimumSize: const Size(100, 44)),
+                        onPressed: () => Navigator.pop(c),
+                        child: const Text('OK'))
+                  ]));
 
   static Future<Map<String, String>?> latest() async {
     if (githubRepo.isEmpty) return null;
     try {
-      final r = await http
-          .get(Uri.parse('https://api.github.com/repos/$githubRepo/releases/latest'), headers: {'Accept': 'application/vnd.github+json'})
-          .timeout(const Duration(seconds: 12));
+      final r = await http.get(
+          Uri.parse('https://api.github.com/repos/$githubRepo/releases/latest'),
+          headers: {
+            'Accept': 'application/vnd.github+json'
+          }).timeout(const Duration(seconds: 12));
       if (r.statusCode != 200) return null;
       final d = jsonDecode(utf8.decode(r.bodyBytes)) as Map;
       var url = '${d['html_url'] ?? ''}';
@@ -47,13 +64,20 @@ class Updates {
           break;
         }
       }
-      return {'version': '${d['tag_name']}'.replaceFirst(RegExp(r'^[vV]'), ''), 'notes': '${d['body'] ?? ''}', 'url': url};
+      return {
+        'version': '${d['tag_name']}'.replaceFirst(RegExp(r'^[vV]'), ''),
+        'notes': '${d['body'] ?? ''}',
+        'url': url
+      };
     } catch (_) {
       return null;
     }
   }
 
-  static List<int> _parts(String s) => s.split('.').map((e) => int.tryParse(e.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0).toList();
+  static List<int> _parts(String s) => s
+      .split('.')
+      .map((e) => int.tryParse(e.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0)
+      .toList();
 
   static bool newer(String a, String b) {
     final x = _parts(a), y = _parts(b);
@@ -82,25 +106,44 @@ class Updates {
     }
     final notes = l['notes']!.trim();
     // Put a line like  min: 1.2.0  in the release notes to force older apps to update.
-    final m = RegExp(r'min(?:imum)?\s*[:=]\s*v?(\d+(?:\.\d+){0,2})', caseSensitive: false).firstMatch(notes);
+    final m = RegExp(r'min(?:imum)?\s*[:=]\s*v?(\d+(?:\.\d+){0,2})',
+            caseSensitive: false)
+        .firstMatch(notes);
     final force = m != null && newer(m.group(1)!, info.version);
     await showDialog(
         context: c,
         barrierDismissible: !force,
-        builder: (_) => PopScope(canPop: !force, child: AlertDialog(
+        builder: (_) => PopScope(
+            canPop: !force,
+            child: AlertDialog(
                 title: Text(force ? 'Update required' : 'Update available'),
                 content: SingleChildScrollView(
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text('Version ${l['version']} is ready. You have ${info.version}.'),
-                  if (notes.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(notes)),
-                  const Padding(padding: EdgeInsets.only(top: 10), child: Text('Tap Download, then open the downloaded file and tap Install. Your data stays.', style: TextStyle(color: Colors.black54))),
-                ])),
+                    child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                      Text(
+                          'Version ${l['version']} is ready. You have ${info.version}.'),
+                      if (notes.isNotEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Text(notes)),
+                      const Padding(
+                          padding: EdgeInsets.only(top: 10),
+                          child: Text(
+                              'Tap Download, then open the downloaded file and tap Install. Your data stays.',
+                              style: TextStyle(color: Colors.black54))),
+                    ])),
                 actions: [
-                  if (!force) TextButton(onPressed: () => Navigator.pop(c), child: const Text('Later')),
+                  if (!force)
+                    TextButton(
+                        onPressed: () => Navigator.pop(c),
+                        child: const Text('Later')),
                   FilledButton(
-                      style: FilledButton.styleFrom(minimumSize: const Size(110, 48)),
+                      style: FilledButton.styleFrom(
+                          minimumSize: const Size(110, 48)),
                       onPressed: () {
-                        launchUrl(Uri.parse(l['url']!), mode: LaunchMode.externalApplication);
+                        launchUrl(Uri.parse(l['url']!),
+                            mode: LaunchMode.externalApplication);
                         if (!force) Navigator.pop(c);
                       },
                       child: const Text('Download'))

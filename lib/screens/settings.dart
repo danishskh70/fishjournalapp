@@ -242,6 +242,7 @@ class _MP extends State<MasterPage> {
           label: const Text('Add')),
       body: Fut(
           key: ValueKey('$v-$inactive'),
+          cacheKey: 'master:$path:$inactive',
           load: () => fetch(path, q: {'include_inactive': '$inactive'}),
           build: (c, data, re) {
             final l = data as List;
@@ -414,6 +415,7 @@ class _HR extends State<HotelRates> {
       appBar: AppBar(title: Text('${widget.hotel['name']} rates')),
       body: Fut(
           key: ValueKey(v),
+          cacheKey: 'hotel-rates:${widget.hotel['id']}',
           load: () async {
             final fish = await fetch('/api/v1/fish');
             final rates =

@@ -16,7 +16,9 @@ class _CL extends State<CloseScreen> {
   List fish = [];
   final cs = <int, TextEditingController>{};
   final cash = TextEditingController(), upi = TextEditingController();
-  late final List rows = L(M(widget.j['stock'])['rows']).where((r) => nz(r['opening_quantity']) > 0 || nz(r['purchased']) > 0).toList();
+  late final List rows = L(M(widget.j['stock'])['rows'])
+      .where((r) => nz(r['opening_quantity']) > 0 || nz(r['purchased']) > 0)
+      .toList();
   bool tried = false, busy = false;
 
   @override
@@ -36,13 +38,22 @@ class _CL extends State<CloseScreen> {
       ids.add(f['id'] as int);
     }
     return {
-      'stocks': [for (final id in ids) {'fish_id': id, 'quantity': cs.containsKey(id) ? '${n(cs[id]!.text)}' : '0'}],
+      'stocks': [
+        for (final id in ids)
+          {
+            'fish_id': id,
+            'quantity': cs.containsKey(id) ? '${n(cs[id]!.text)}' : '0'
+          }
+      ],
       'cash_amount': '${n(cash.text)}',
       'upi_amount': '${n(upi.text)}',
     };
   }
 
-  bool filled() => cs.values.every((c) => isNum(c.text)) && isNum(cash.text) && isNum(upi.text);
+  bool filled() =>
+      cs.values.every((c) => isNum(c.text)) &&
+      isNum(cash.text) &&
+      isNum(upi.text);
 
   Future<void> check() async {
     if (Jobs.i.list.isNotEmpty) {
@@ -57,7 +68,9 @@ class _CL extends State<CloseScreen> {
     setState(() => busy = true);
     Map? r;
     try {
-      r = await Api.req('POST', '/api/v1/journals/${widget.j['id']}/close-preview', body: body()) as Map;
+      r = await Api.req(
+          'POST', '/api/v1/journals/${widget.j['id']}/close-preview',
+          body: body()) as Map;
     } on ApiException catch (e) {
       if (mounted) toast(context, e.message);
     }
@@ -70,7 +83,8 @@ class _CL extends State<CloseScreen> {
   Future<void> close() async {
     setState(() => busy = true);
     try {
-      await Api.req('POST', '/api/v1/journals/${widget.j['id']}/close', body: body());
+      await Api.req('POST', '/api/v1/journals/${widget.j['id']}/close',
+          body: body());
       if (mounted) Navigator.pop(context, true);
       return;
     } on ApiException catch (e) {
@@ -92,27 +106,42 @@ class _CL extends State<CloseScreen> {
       bottomNavigationBar: SafeArea(
           child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-              child: FilledButton(style: FilledButton.styleFrom(backgroundColor: coral), onPressed: busy ? null : check, child: Text(busy ? 'Please wait' : 'Check and End Day')))),
+              child: FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: coral),
+                  onPressed: busy ? null : check,
+                  child: Text(busy ? 'Please wait' : 'Check and End Day')))),
       body: ListView(padding: const EdgeInsets.all(16), children: [
         Panel(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Sect('1. Fish left in shop (kg)', Icons.inventory_2, teal),
           if (rows.isEmpty) const EmptyNote('No fish today.'),
           for (final r in rows)
             Padding(
                 padding: const EdgeInsets.only(bottom: 12),
                 child: numField(cs[r['fish_id'] as int]!, '${r['fish_name']}',
-                    helper: 'Had ${qty(r['available'])} kg • Hotels took ${qty(r['hotel_sold'])} kg',
-                    error: tried && !isNum(cs[r['fish_id'] as int]!.text) ? 'Type 0 if none' : null,
+                    helper:
+                        'Had ${qty(r['available'])} kg • Hotels took ${qty(r['hotel_sold'])} kg',
+                    error: tried && !isNum(cs[r['fish_id'] as int]!.text)
+                        ? 'Type 0 if none'
+                        : null,
                     onChanged: (_) => setState(() {}))),
-          if (rows.isNotEmpty) TextButton(onPressed: zeroAll, child: const Text('Nothing left. Fill empty boxes with 0')),
+          if (rows.isNotEmpty)
+            TextButton(
+                onPressed: zeroAll,
+                child: const Text('Nothing left. Fill empty boxes with 0')),
         ])),
         Panel(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           const Sect('2. Total money today', Icons.payments, ocean),
-          numField(cash, 'Total cash (₹)', error: tried && !isNum(cash.text) ? 'Type 0 if none' : null, onChanged: (_) => setState(() {})),
+          numField(cash, 'Total cash (₹)',
+              error: tried && !isNum(cash.text) ? 'Type 0 if none' : null,
+              onChanged: (_) => setState(() {})),
           const SizedBox(height: 12),
-          numField(upi, 'Total UPI (₹)', error: tried && !isNum(upi.text) ? 'Type 0 if none' : null, onChanged: (_) => setState(() {})),
+          numField(upi, 'Total UPI (₹)',
+              error: tried && !isNum(upi.text) ? 'Type 0 if none' : null,
+              onChanged: (_) => setState(() {})),
         ])),
         const SizedBox(height: 60),
       ]));
@@ -127,19 +156,49 @@ class PreviewView extends StatelessWidget {
     final nc = L(r['sales_normal_customer']);
     final m = M(r['money']);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(can ? 'Ready to close' : 'Cannot close yet', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: can ? teal : coral)),
+      Text(can ? 'Ready to close' : 'Cannot close yet',
+          style: TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.w800,
+              color: can ? teal : coral)),
       const SizedBox(height: 10),
-      for (final p in L(r['problems'])) Inner(Text('$p', style: const TextStyle(color: coral))),
+      for (final p in L(r['problems']))
+        Inner(Text('$p', style: const TextStyle(color: coral))),
       if (nc.isNotEmpty) ...[
         const Sect('Walk-in customers took', Icons.people, ocean),
-        tbl(['Fish', 'Kg'], [for (final e in nc) ['${e['fish_name']}', qty(e['quantity'])]], foot: ['Total', qty(sum(nc, 'quantity'))], flex: [3, 1]),
+        tbl([
+          'Fish',
+          'Kg'
+        ], [
+          for (final e in nc) ['${e['fish_name']}', qty(e['quantity'])]
+        ], foot: [
+          'Total',
+          qty(sum(nc, 'quantity'))
+        ], flex: [
+          3,
+          1
+        ]),
         const SizedBox(height: 12),
       ],
-      if (m.isNotEmpty) Row(children: [Mini('Cash', inr(m['cash_amount'])), Mini('UPI', inr(m['upi_amount'])), Mini('Total', inr(m['total']), col: teal)]),
+      if (m.isNotEmpty)
+        Row(children: [
+          Mini('Cash', inr(m['cash_amount'])),
+          Mini('UPI', inr(m['upi_amount'])),
+          Mini('Total', inr(m['total']), col: teal)
+        ]),
       const SizedBox(height: 16),
-      if (can) FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Confirm and Close Business')),
-      if (!can) FilledButton(onPressed: () => Navigator.pop(c, false), child: const Text('Go back and fix')),
-      if (can) TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Go back')),
+      if (can)
+        FilledButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('Confirm and Close Business')),
+      if (!can)
+        FilledButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Go back and fix')),
+      if (can)
+        TextButton(
+            onPressed: () => Navigator.pop(c, false),
+            child: const Text('Go back')),
     ]);
   }
 }

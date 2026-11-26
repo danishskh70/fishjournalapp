@@ -52,18 +52,32 @@ class _TE extends State<TodayEntries> {
   }
 
   Future<void> editPay(bool hotel, Map e) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => PayScreen(hotel: hotel, existing: e)));
+    await Navigator.push(
+        context,
+        MaterialPageRoute(
+            builder: (_) => PayScreen(hotel: hotel, existing: e)));
     if (mounted) setState(() => v++);
   }
 
-  Widget row(Widget info, bool closed, VoidCallback edit, VoidCallback delete) => Inner(Row(children: [
+  Widget row(
+          Widget info, bool closed, VoidCallback edit, VoidCallback delete) =>
+      Inner(Row(children: [
         Expanded(child: info),
-        if (!closed) IconButton(tooltip: 'Edit', icon: const Icon(Icons.edit_outlined), onPressed: edit),
-        if (!closed) IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline), onPressed: delete),
+        if (!closed)
+          IconButton(
+              tooltip: 'Edit',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: edit),
+        if (!closed)
+          IconButton(
+              tooltip: 'Delete',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: delete),
       ]));
 
   Widget sect(String t, IconData i, Color col, List<Widget> kids) => Panel(
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Sect(t, i, col),
         if (kids.isEmpty) const EmptyNote('Nothing yet'),
         ...kids,
@@ -74,6 +88,7 @@ class _TE extends State<TodayEntries> {
       appBar: AppBar(title: const Text('Entries')),
       body: Fut(
           key: ValueKey(v),
+          cacheKey: 'journal:${widget.date}',
           load: () => Api.req('GET', '/api/v1/journals/by-date/${widget.date}'),
           build: (c, x, re) {
             final j = x as Map;
@@ -84,15 +99,26 @@ class _TE extends State<TodayEntries> {
             final sp = L(M(j['supplier_info'])['later_payments']);
             return ListView(padding: const EdgeInsets.all(16), children: [
               const JobTray(),
-              if (closed) const Panel(child: Text('This day is closed. Entries cannot be changed.')),
+              if (closed)
+                const Panel(
+                    child:
+                        Text('This day is closed. Entries cannot be changed.')),
               sect('Purchases', Icons.shopping_basket, coral, [
                 for (final e in pur)
                   row(
-                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${e['supplier_name']} • ${e['fish_name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        Text('${qty(e['quantity'])} kg × ${inr(e['rate'])} = ${inr(e['amount'])}'),
-                        Text('Paid ${inr(e['paid_now'])} • Pending ${inr(e['due_created'])}', style: const TextStyle(color: Colors.black54, fontSize: 12)),
-                      ]),
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${e['supplier_name']} • ${e['fish_name']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            Text(
+                                '${qty(e['quantity'])} kg × ${inr(e['rate'])} = ${inr(e['amount'])}'),
+                            Text(
+                                'Paid ${inr(e['paid_now'])} • Pending ${inr(e['due_created'])}',
+                                style: const TextStyle(
+                                    color: Colors.black54, fontSize: 12)),
+                          ]),
                       closed,
                       () => editPurchase(e as Map),
                       () => del('/api/v1/purchases', e as Map, 'purchase')),
@@ -100,10 +126,15 @@ class _TE extends State<TodayEntries> {
               sect('Hotel sales', Icons.storefront, teal, [
                 for (final e in sal)
                   row(
-                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${e['hotel_name']} • ${e['fish_name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        Text('${qty(e['quantity'])} kg × ${inr(e['rate'])} = ${inr(e['amount'])}'),
-                      ]),
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${e['hotel_name']} • ${e['fish_name']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            Text(
+                                '${qty(e['quantity'])} kg × ${inr(e['rate'])} = ${inr(e['amount'])}'),
+                          ]),
                       closed,
                       () => editSale(e as Map),
                       () => del('/api/v1/hotel-sales', e as Map, 'sale')),
@@ -111,10 +142,15 @@ class _TE extends State<TodayEntries> {
               sect('Received from hotels today', Icons.south_west, teal, [
                 for (final e in hp)
                   row(
-                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${e['hotel_name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        Text('${inr(e['amount'])} • ${'${e['payment_mode']}'.toUpperCase()}'),
-                      ]),
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${e['hotel_name']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            Text(
+                                '${inr(e['amount'])} • ${'${e['payment_mode']}'.toUpperCase()}'),
+                          ]),
                       closed,
                       () => editPay(true, e as Map),
                       () => del('/api/v1/hotel-payments', e as Map, 'payment')),
@@ -122,13 +158,19 @@ class _TE extends State<TodayEntries> {
               sect('Paid to suppliers today', Icons.north_east, coral, [
                 for (final e in sp)
                   row(
-                      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text('${e['supplier_name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
-                        Text('${inr(e['amount'])} • ${'${e['payment_mode']}'.toUpperCase()}'),
-                      ]),
+                      Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${e['supplier_name']}',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w800)),
+                            Text(
+                                '${inr(e['amount'])} • ${'${e['payment_mode']}'.toUpperCase()}'),
+                          ]),
                       closed,
                       () => editPay(false, e as Map),
-                      () => del('/api/v1/supplier-payments', e as Map, 'payment')),
+                      () => del(
+                          '/api/v1/supplier-payments', e as Map, 'payment')),
               ]),
             ]);
           }));
@@ -176,8 +218,10 @@ class _EP extends State<EditPurchase> {
   }
 
   @override
-  Widget build(BuildContext c) => Column(mainAxisSize: MainAxisSize.min, children: [
-        Text('${widget.e['supplier_name']} • ${widget.e['fish_name']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+  Widget build(BuildContext c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('${widget.e['supplier_name']} • ${widget.e['fish_name']}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(height: 14),
         numField(q, 'Quantity (kg)'),
         const SizedBox(height: 12),
@@ -185,12 +229,17 @@ class _EP extends State<EditPurchase> {
         const SizedBox(height: 12),
         numField(p, 'Paid now (₹)'),
         const SizedBox(height: 12),
-        SegmentedButton<String>(
-            segments: const [ButtonSegment(value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)), ButtonSegment(value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))],
-            selected: {mode},
-            onSelectionChanged: (s) => setState(() => mode = s.first)),
+        SegmentedButton<String>(segments: const [
+          ButtonSegment(
+              value: 'cash', label: Text('Cash'), icon: Icon(Icons.payments)),
+          ButtonSegment(
+              value: 'upi', label: Text('UPI'), icon: Icon(Icons.qr_code))
+        ], selected: {
+          mode
+        }, onSelectionChanged: (s) => setState(() => mode = s.first)),
         const SizedBox(height: 16),
-        FilledButton(onPressed: busy ? null : save, child: const Text('Save changes')),
+        FilledButton(
+            onPressed: busy ? null : save, child: const Text('Save changes')),
       ]);
 }
 
@@ -227,13 +276,16 @@ class _ES extends State<EditSale> {
   }
 
   @override
-  Widget build(BuildContext c) => Column(mainAxisSize: MainAxisSize.min, children: [
-        Text('${widget.e['hotel_name']} • ${widget.e['fish_name']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+  Widget build(BuildContext c) =>
+      Column(mainAxisSize: MainAxisSize.min, children: [
+        Text('${widget.e['hotel_name']} • ${widget.e['fish_name']}',
+            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
         const SizedBox(height: 14),
         numField(q, 'Quantity (kg)'),
         const SizedBox(height: 12),
         numField(r, 'Rate per kg (₹)'),
         const SizedBox(height: 16),
-        FilledButton(onPressed: busy ? null : save, child: const Text('Save changes')),
+        FilledButton(
+            onPressed: busy ? null : save, child: const Text('Save changes')),
       ]);
 }

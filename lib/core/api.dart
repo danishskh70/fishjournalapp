@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:async';
+import 'cache.dart';
 
 class ApiException implements Exception {
   final int code;
@@ -30,6 +31,7 @@ class Api {
   static Future<void> _clearTokens() async {
     _a = null;
     _r = null;
+    DataCache.i.clear();
     await _s.delete(key: 'a');
     await _s.delete(key: 'r');
   }
@@ -170,7 +172,11 @@ class Api {
       );
     }
     final data = r.body.isEmpty ? null : jsonDecode(utf8.decode(r.bodyBytes));
-    if (r.statusCode >= 200 && r.statusCode < 300) return data;
+    if (r.statusCode >= 200 && r.statusCode < 300) {
+      if (method != 'GET' && !path.startsWith('/api/v1/auth'))
+        DataCache.i.invalidateAll();
+      return data;
+    }
     throw ApiException(r.statusCode, _msg(r.statusCode, data));
   }
 
