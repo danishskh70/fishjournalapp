@@ -4,6 +4,11 @@ const githubRepo = 'danishskh70/fishjournalapp';
 
 /// What's new text, shown once after the app is updated. Add one entry per release.
 const Map<String, List<String>> changelog = {
+  '1.1.2': [
+    'Faster loading with data caching',
+    'Improved pull-to-refresh and automatic data refresh',
+    'Prevents outdated requests from overwriting newer data',
+  ],
   '1.1.1': [
     'Improved automatic session renewal',
     'More reliable handling of simultaneous API requests',
