@@ -16,6 +16,13 @@ class Api {
   static String? _a, _r;
   static void Function()? onExpired;
 
+  /// Wakes the free Render server early. Result ignored.
+  static Future<void> ping() async {
+    try {
+      await http.get(Uri.parse('$base/health')).timeout(const Duration(seconds: 45));
+    } catch (_) {}
+  }
+
   static Future<bool> hasSession() async {
     _a = await _s.read(key: 'a');
     _r = await _s.read(key: 'r');
@@ -30,25 +37,21 @@ class Api {
   }
 
   static Future<void> login(String u, String p) async =>
-      _save(await req('POST', '/api/v1/auth/login',
-          body: {'username': u, 'password': p}, auth: false));
+      _save(await req('POST', '/api/v1/auth/login', body: {'username': u, 'password': p}, auth: false));
+
   static Future<void> logout() async {
     try {
-      await req('POST', '/api/v1/auth/logout',
-          body: _r == null ? null : {'refresh_token': _r});
+      await req('POST', '/api/v1/auth/logout', body: _r == null ? null : {'refresh_token': _r});
     } catch (_) {}
     _a = null;
     _r = null;
     await _s.deleteAll();
   }
 
-  static Future<bool> flag(String k) async => await _s.read(key: k) == '1';
-  static Future<void> setFlag(String k) => _s.write(key: k, value: '1');
   static Future<bool> _refresh() async {
     if (_r == null) return false;
     try {
-      await _save(await req('POST', '/api/v1/auth/refresh',
-          body: {'refresh_token': _r}, auth: false));
+      await _save(await req('POST', '/api/v1/auth/refresh', body: {'refresh_token': _r}, auth: false));
       return true;
     } catch (_) {
       return false;
@@ -56,27 +59,19 @@ class Api {
   }
 
   static Future<dynamic> req(String method, String path,
-      {Map<String, dynamic>? body,
-      Map<String, String>? q,
-      bool auth = true,
-      bool retry = true}) async {
-    final uri = Uri.parse(base + path)
-        .replace(queryParameters: q == null || q.isEmpty ? null : q);
-    final rq = http.Request(method, uri)
-      ..headers['Content-Type'] = 'application/json';
+      {Map<String, dynamic>? body, Map<String, String>? q, bool auth = true, bool retry = true}) async {
+    final uri = Uri.parse(base + path).replace(queryParameters: q == null || q.isEmpty ? null : q);
+    final rq = http.Request(method, uri)..headers['Content-Type'] = 'application/json';
     if (auth && _a != null) rq.headers['Authorization'] = 'Bearer $_a';
     if (body != null) rq.body = jsonEncode(body);
     http.Response r;
     try {
-      r = await http.Response.fromStream(
-          await rq.send().timeout(const Duration(seconds: 60)));
+      r = await http.Response.fromStream(await rq.send().timeout(const Duration(seconds: 60)));
     } catch (_) {
-      throw ApiException(
-          0, 'Cannot reach the server. Check your internet and try again.');
+      throw ApiException(0, 'Cannot reach the server. Check internet and try again.');
     }
     if (r.statusCode == 401 && auth) {
-      if (retry && await _refresh())
-        return req(method, path, body: body, q: q, retry: false);
+      if (retry && await _refresh()) return req(method, path, body: body, q: q, retry: false);
       onExpired?.call();
       throw ApiException(401, 'Session expired. Please log in again.');
     }
@@ -90,15 +85,8 @@ class Api {
     if (d is Map) {
       final x = d['detail'] ?? d['message'];
       if (x is String) return x;
-      if (x is List)
-        return x.map((e) => e is Map ? '${e['msg']}' : '$e').join('\n');
+      if (x is List) return x.map((e) => e is Map ? '${e['msg']}' : '$e').join('\n');
     }
-    return {
-          403: 'Not permitted.',
-          404: 'Record not found.',
-          409: 'Already exists / conflict.',
-          422: 'Invalid data.'
-        }[c] ??
-        'Error $c';
+    return {403: 'Not permitted.', 404: 'Record not found.', 409: 'Already exists / conflict.', 422: 'Invalid data.'}[c] ?? 'Error $c';
   }
 }

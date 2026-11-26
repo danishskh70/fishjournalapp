@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
+import '../core/jobs.dart';
+import '../core/store.dart';
 import '../core/ui.dart';
-import 'accounts.dart';
-import 'day.dart';
-import 'journal.dart';
+import 'close.dart';
+import 'opening.dart';
+import 'pay.dart';
+import 'sheet.dart';
+import 'work.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -12,219 +16,253 @@ class HomePage extends StatefulWidget {
 }
 
 class _HS extends State<HomePage> {
-  Map? j;
+  Map? dash;
+  List hist = [];
   bool busy = true;
   String? err;
-  final today = DateTime.now();
-  String get ds => isoDate(today);
+  String shop = '';
+  static bool _resumed = false;
+
+  String get ds => isoDate(DateTime.now());
+  Map? get jn => dash == null ? null : dash!['journal'] as Map?;
+  bool get closed => jn != null && '${jn!['status']}' == 'closed';
+  List get stock => L(dash?['stock_overview']);
+  bool get openingDone => jn != null && (closed || stock.any((r) => r['opening_confirmed'] == true));
+
+  Map? get prevOpen {
+    for (final h in hist) {
+      if ('${h['status']}' != 'closed' && '${h['business_date']}' != ds) return h as Map;
+    }
+    return null;
+  }
+
+  Map? get lastClosed {
+    for (final h in hist) {
+      if ('${h['status']}' == 'closed' && '${h['business_date']}' != ds) return h as Map;
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
+    Jobs.i.tick.addListener(_tick);
     load();
   }
 
-  Future<void> load() async {
-    setState(() {
-      busy = true;
+  @override
+  void dispose() {
+    Jobs.i.tick.removeListener(_tick);
+    super.dispose();
+  }
+
+  void _tick() {
+    if (mounted) load(quiet: true);
+  }
+
+  Future<void> load({bool quiet = false}) async {
+    if (!quiet) setState(() { busy = true; err = null; });
+    try {
+      final d = await Api.req('GET', '/api/v1/dashboard', q: {'business_date': ds});
+      final h = await fetch('/api/v1/history', q: {'limit': '6', 'offset': '0'});
+      dash = d as Map;
+      hist = h;
+      shop = (await Store.get('shop')) ?? '';
       err = null;
-    });
-    try {
-      j = await Api.req('GET', '/api/v1/journals/by-date/$ds');
     } on ApiException catch (e) {
-      if (e.code == 404) {
-        j = null;
-      } else {
-        err = e.message;
-      }
+      err = e.message;
     }
-    if (mounted) setState(() => busy = false);
+    if (!mounted) return;
+    setState(() => busy = false);
+    _maybeResume();
   }
 
-  Future<void> go(Widget w) async {
-    if (await Navigator.push(context, MaterialPageRoute(builder: (_) => w)) ==
-        true) load();
+  /// After the phone closed the app, go back into the work screen once.
+  Future<void> _maybeResume() async {
+    if (_resumed) return;
+    _resumed = true;
+    if (jn != null && openingDone && !closed && (await Store.get('resume')) == '1' && mounted) {
+      openWork();
+    }
   }
 
-  Future<void> del(String path, Map e) async {
-    if (!await confirm(context, 'Delete this entry?')) return;
+  Future<T?> push<T>(Widget w) => Navigator.push<T>(context, MaterialPageRoute<T>(builder: (_) => w));
+
+  Future<void> openWork({String? date}) async {
+    await push(WorkScreen(date: date ?? ds));
+    if (mounted) load(quiet: true);
+  }
+
+  Future<void> openSheet(String d) async {
+    await push(DaySheet(date: d));
+    if (mounted) load(quiet: true);
+  }
+
+  Future<void> pay(bool hotel) async {
+    await push(PayScreen(hotel: hotel));
+    if (mounted) load(quiet: true);
+  }
+
+  Future<Map?> _today() async {
     try {
-      await Api.req('DELETE', '$path/${e['id']}');
-      load();
-    } on ApiException catch (x) {
-      if (mounted) toast(context, x.message);
+      return await Api.req('GET', '/api/v1/journals/by-date/$ds') as Map;
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+      return null;
     }
   }
 
-  Widget act(String t, String s, IconData i, Color col, VoidCallback on) =>
-      Expanded(
-          child: Padding(
-              padding: const EdgeInsets.all(4),
-              child: Material(
-                  color: col,
-                  borderRadius: BorderRadius.circular(22),
-                  child: InkWell(
-                      borderRadius: BorderRadius.circular(22),
-                      onTap: on,
-                      child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(i, color: Colors.white, size: 30),
-                                const SizedBox(height: 14),
-                                Text(t,
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 17)),
-                                Text(s,
-                                    style: const TextStyle(
-                                        color: Colors.white70, fontSize: 12))
-                              ]))))));
+  Future<void> start() async {
+    try {
+      await Api.req('POST', '/api/v1/journals', body: {'business_date': ds});
+    } on ApiException catch (e) {
+      if (mounted) toast(context, e.message);
+      return;
+    }
+    await openOpening();
+  }
+
+  Future<void> openOpening() async {
+    final j = await _today();
+    if (j == null || !mounted) return;
+    final ok = await push<bool>(OpeningScreen(j: j));
+    if (ok == true && mounted) {
+      await openWork();
+    } else if (mounted) {
+      load(quiet: true);
+    }
+  }
+
+  Future<void> endDay() async {
+    if (Jobs.i.list.isNotEmpty) {
+      toast(context, 'Wait. Some entries are not saved yet.');
+      return;
+    }
+    final j = await _today();
+    if (j == null || !mounted) return;
+    final ok = await push<bool>(CloseScreen(j: j));
+    if (ok == true && mounted) await push(DaySheet(date: ds));
+    if (mounted) load(quiet: true);
+  }
+
+  Widget hero() {
+    final prev = prevOpen;
+    late String title, btn;
+    late VoidCallback on;
+    String sub = '';
+    Widget? second;
+    if (jn == null && prev != null) {
+      final yest = '${prev['business_date']}' == isoDate(DateTime.now().subtract(const Duration(days: 1)));
+      title = yest ? "Yesterday isn't closed" : '${niceDate('${prev['business_date']}')} is not closed';
+      sub = 'Close it first. Then start today.';
+      btn = 'Open that day';
+      on = () => openWork(date: '${prev['business_date']}');
+    } else if (jn == null) {
+      title = 'Business not started';
+      btn = "Start Today's Business";
+      on = start;
+    } else if (!openingDone) {
+      title = 'Confirm morning stock';
+      sub = 'Check the fish you really have.';
+      btn = 'Confirm morning stock';
+      on = openOpening;
+    } else if (!closed) {
+      title = 'Business is open';
+      sub = 'Record purchases and hotel sales.';
+      btn = 'Continue Business';
+      on = () => openWork();
+      second = TextButton(onPressed: endDay, child: const Text('End of Day', style: TextStyle(color: Colors.white)));
+    } else {
+      title = 'Business closed';
+      sub = 'Today is saved.';
+      btn = "View Today's Sheet";
+      on = () => openSheet(ds);
+    }
+    return Grad(
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(title, style: const TextStyle(color: Colors.white, fontSize: 26, fontWeight: FontWeight.w800)),
+      if (sub.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 4), child: Text(sub, style: const TextStyle(color: Colors.white70))),
+      const SizedBox(height: 16),
+      FilledButton(style: FilledButton.styleFrom(backgroundColor: Colors.white, foregroundColor: ocean), onPressed: on, child: Text(btn)),
+      if (second != null) Center(child: second),
+    ]));
+  }
+
+  Widget owe(String t, dynamic v, Color col, int tab) => Expanded(
+      child: Panel(
+          onTap: () {
+            accTab.value = tab;
+            shellTab.value = 1;
+          },
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(t, style: const TextStyle(color: Colors.black54, fontSize: 12)),
+            const SizedBox(height: 6),
+            Text(inr(v), style: TextStyle(color: col, fontWeight: FontWeight.w800, fontSize: 22)),
+          ])));
+
+  Widget act(String t, IconData i, Color col, VoidCallback on) => Expanded(
+      child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: col), onPressed: on, icon: Icon(i), label: Text(t))));
+
   @override
   Widget build(BuildContext c) {
-    if (busy) return const Center(child: CircularProgressIndicator());
-    if (err != null)
+    if (busy && dash == null) return const Center(child: CircularProgressIndicator());
+    if (dash == null) {
       return Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Text(err!),
-        const SizedBox(height: 12),
-        FilledButton(onPressed: load, child: const Text('Retry'))
-      ]));
-    final closed = j != null && '${j!['status']}' == 'closed';
-    final jid = j == null ? 0 : j!['id'] as int;
-    final done = j != null && openingDone(j!);
-    final open = j == null
-        ? []
-        : stockRows(j!).where((r) => num0(r['opening_quantity']) > 0).toList();
+          child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.cloud_off, size: 48, color: Colors.black38),
+                const SizedBox(height: 12),
+                Text(err ?? 'Could not load', textAlign: TextAlign.center),
+                const SizedBox(height: 12),
+                FilledButton(onPressed: load, child: const Text('Retry')),
+              ])));
+    }
+    final h = DateTime.now().hour;
+    final hi = h < 12 ? 'Good morning' : (h < 17 ? 'Good afternoon' : 'Good evening');
+    final lc = lastClosed;
+    final y = isoDate(DateTime.now().subtract(const Duration(days: 1)));
+    final live = stock.where((r) => nz(r['current_stock']) > 0).toList();
     return RefreshIndicator(
         onRefresh: load,
         child: ListView(padding: const EdgeInsets.all(16), children: [
-          Grad(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(niceDate(ds),
-                    style: const TextStyle(color: Colors.white70)),
-                const SizedBox(height: 4),
-                Text(
-                    j == null
-                        ? 'Start your day'
-                        : closed
-                            ? 'Business closed'
-                            : 'Business is open',
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800)),
-                if (j == null) ...[
-                  const SizedBox(height: 14),
-                  FilledButton(
-                      style: FilledButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: ocean),
-                      onPressed: () async {
-                        try {
-                          await Api.req('POST', '/api/v1/journals',
-                              body: {'business_date': ds});
-                          load();
-                        } on ApiException catch (e) {
-                          toast(c, e.message);
-                        }
-                      },
-                      child: const Text("Start today's journal"))
-                ]
-              ])),
+          Text(shop.isEmpty ? hi : '$hi • $shop', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+          Text(shortDate(ds), style: const TextStyle(color: Colors.black54)),
           const SizedBox(height: 14),
-          if (j != null) ...[
-            if (!done)
-              Panel(
-                  onTap: () => go(OpeningScreen(j: j!)),
-                  child: const Row(children: [
-                    CircleAvatar(
-                        backgroundColor: Color(0x22FF7A59),
-                        child: Icon(Icons.inventory_2, color: coral)),
-                    SizedBox(width: 12),
-                    Expanded(
-                        child: Text('Confirm opening stock first',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w800, fontSize: 16))),
-                    Icon(Icons.chevron_right)
-                  ]))
-            else
-              block('Opening stock', Icons.inventory_2, teal, [
-                Wrap(children: [
-                  for (final r in open)
-                    Tile('${r['fish_name']}', kg(r['opening_quantity']))
-                ])
-              ]),
-            if (done && !closed) ...[
-              Row(children: [
-                act(
-                    'Purchase',
-                    'with payment',
-                    Icons.shopping_basket,
-                    coral,
-                    () => sheet<bool>(c, TxForm(jid: jid, sale: false))
-                        .then((v) => v == true ? load() : null)),
-                act(
-                    'Hotel sale',
-                    'fish to hotel',
-                    Icons.storefront,
-                    teal,
-                    () => sheet<bool>(c, TxForm(jid: jid, sale: true))
-                        .then((v) => v == true ? load() : null))
-              ]),
-              Row(children: [
-                act(
-                    'Pay supplier',
-                    'old dues',
-                    Icons.north_east,
-                    const Color(0xFFB4533A),
-                    () => sheet(c, const PaySheet(hotel: false))
-                        .then((_) => load())),
-                act(
-                    'Hotel paid',
-                    'money received',
-                    Icons.south_west,
-                    const Color(0xFF0E6E7E),
-                    () => sheet(c, const PaySheet(hotel: true))
-                        .then((_) => load()))
-              ]),
-              const SizedBox(height: 10)
-            ],
-            block("Today's purchases", Icons.shopping_basket, coral, [
-              for (final e in L(j!['purchases']['entries']))
-                entry('purchase', e,
-                    del: closed ? null : () => del('/api/v1/purchases', e))
-            ]),
-            block("Today's hotel sales", Icons.storefront, teal, [
-              for (final e in L(j!['sales']['hotel_sales']))
-                entry('sale', e,
-                    del: closed ? null : () => del('/api/v1/hotel-sales', e))
-            ]),
-            block('Paid to suppliers (later)', Icons.north_east, coral, [
-              for (final e in L(j!['supplier_info']['later_payments']))
-                entry('spay', e)
-            ]),
-            block('Received from hotels', Icons.south_west, teal, [
-              for (final e in L(j!['hotel_info']['payments_received']))
-                entry('hpay', e)
-            ]),
-            if (closed) ...[
-              FilledButton(
-                  onPressed: () => Navigator.push(
-                          c,
-                          MaterialPageRoute(
-                              builder: (_) => DayDetail(date: today)))
-                      .then((_) => load()),
-                  child: const Text("View today's full record"))
-            ] else if (done)
-              FilledButton(
-                  style: FilledButton.styleFrom(backgroundColor: coral),
-                  onPressed: () => go(CloseScreen(j: j!)),
-                  child: const Text('Close business'))
-          ]
+          const JobTray(),
+          hero(),
+          const SizedBox(height: 14),
+          Row(children: [
+            owe('Hotels owe you', dash!['hotel_outstanding_total'], teal, 0),
+            const SizedBox(width: 12),
+            owe('You owe suppliers', dash!['supplier_outstanding_total'], coral, 1),
+          ]),
+          Row(children: [
+            act('Pay Supplier', Icons.north_east, coral, () => pay(false)),
+            act('Hotel Paid', Icons.south_west, teal, () => pay(true)),
+          ]),
+          const SizedBox(height: 16),
+          if (openingDone && !closed && live.isNotEmpty)
+            Panel(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Sect('Stock now', Icons.inventory_2, teal),
+              Wrap(children: [for (final r in live) Tile('${r['fish_name']}', kg(r['current_stock']))]),
+            ])),
+          if (lc != null)
+            Panel(
+                onTap: () => openSheet('${lc['business_date']}'),
+                child: Row(children: [
+                  CircleAvatar(backgroundColor: tint(ocean), child: const Icon(Icons.history, color: ocean)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text('${lc['business_date']}' == y ? "Yesterday's review" : 'Last business day', style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16)),
+                    Text('${niceDate('${lc['business_date']}')} • Money ${inr(lc['total_money'])}', style: const TextStyle(color: Colors.black54)),
+                  ])),
+                  const Icon(Icons.chevron_right),
+                ])),
         ]));
   }
 }
