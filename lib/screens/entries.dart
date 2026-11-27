@@ -70,15 +70,19 @@ class _TE extends State<TodayEntries> {
       Inner(Row(children: [
         Expanded(child: info),
         if (!closed)
-          IconButton(
-              tooltip: 'Edit',
-              icon: const Icon(Icons.edit_outlined),
-              onPressed: edit),
-        if (!closed)
-          IconButton(
-              tooltip: 'Delete',
-              icon: const Icon(Icons.delete_outline),
-              onPressed: delete),
+          PopupMenuButton<String>(
+              tooltip: 'More',
+              onSelected: (a) {
+                if (a == 'edit') {
+                  edit();
+                } else {
+                  delete();
+                }
+              },
+              itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Update')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ]),
       ]));
 
   Widget sect(String t, IconData i, Color col, List<Widget> kids) => Panel(

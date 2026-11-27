@@ -275,37 +275,148 @@ class _LP extends State<LedgerPage> {
             month: now.month));
   }
 
-  Widget entry(Map e) {
-    final pay = '${e['entry_type']}'.toLowerCase().contains('payment') ||
-        e['fish_name'] == null;
-    final col = pay ? teal : coral;
-    return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(pay ? Icons.south_west : Icons.set_meal, size: 20, color: col),
-          const SizedBox(width: 10),
-          Expanded(
-              child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(
-                    pay
-                        ? '${widget.hotel ? 'Received' : 'Paid'} (${'${e['payment_mode'] ?? ''}'.toUpperCase()})'
-                        : '${e['fish_name']}',
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                if (!pay)
-                  Text('${qty(e['quantity'])} kg × ${inr(e['rate'])}',
-                      style:
-                          const TextStyle(color: Colors.black54, fontSize: 12)),
-                if (!pay && !widget.hotel && e['paid_now'] != null)
-                  Text(
-                      'Paid ${inr(e['paid_now'])} • Pending ${inr(e['due_created'])}',
-                      style:
-                          const TextStyle(color: Colors.black54, fontSize: 12)),
-              ])),
-          Text('${pay ? '-' : '+'}${inr(e['amount'])}',
-              style: TextStyle(color: col, fontWeight: FontWeight.w800)),
-        ]));
+  static const red = Color(0xFFB91C1C), green = Color(0xFF15803D);
+
+  String get owesLabel => widget.hotel ? 'Owes' : 'You owe';
+
+  bool isPay(Map e) =>
+      '${e['entry_type']}'.toLowerCase().contains('payment') ||
+      e['fish_name'] == null;
+
+  String dayLabel(String k) {
+    final now = DateTime.now();
+    if (k == isoDate(now)) return 'Today';
+    if (k == isoDate(now.subtract(const Duration(days: 1)))) return 'Yesterday';
+    return shortDate(k);
+  }
+
+  Widget avatar(IconData i, Color c) =>
+      CircleAvatar(backgroundColor: tint(c, 30), child: Icon(i, color: c));
+
+  Widget right(String amt, Color? col, String sub) => Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(amt,
+                style: TextStyle(
+                    fontWeight: FontWeight.w800, fontSize: 16, color: col)),
+            const SizedBox(height: 2),
+            Text(sub,
+                style: const TextStyle(color: Colors.black54, fontSize: 12)),
+          ]);
+
+  Widget line(String l, String v, {Color? col, bool bold = false}) => Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Expanded(
+            child: Text(l,
+                style: TextStyle(
+                    fontWeight: bold ? FontWeight.w800 : FontWeight.w500))),
+        Text(v,
+            style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: bold ? 16 : 14,
+                color: col)),
+      ]));
+
+  /// Money in (hotel paid you, green) or money out (you paid supplier, red).
+  Widget payRow(Map e) {
+    final inn = widget.hotel;
+    final col = green;
+    final mode = '${e['payment_mode'] ?? ''}'.toUpperCase();
+    return ListTile(
+        leading: avatar(inn ? Icons.arrow_downward : Icons.arrow_upward, col),
+        title: Text(inn ? 'Received' : 'Paid',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(mode.isEmpty ? 'Payment' : mode),
+        trailing: right(
+            inr(e['amount']), col, '$owesLabel ${inr(e['running_balance'])}'));
+  }
+
+  /// Fish bought (supplier) or fish sold (hotel). Tap to open details.
+  Widget billRow(List<Map> fs) {
+    final bill = sum(fs, 'amount');
+    final paid = widget.hotel ? 0 : sum(fs, 'paid_now');
+    final pend = sum(fs, 'due_created');
+    final names = <String>[];
+    for (final e in fs) {
+      final n = '${e['fish_name']}';
+      if (!names.contains(n)) names.add(n);
+    }
+    final moved = paid > 0;
+    return ExpansionTile(
+        shape: const Border(),
+        collapsedShape: const Border(),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        expandedCrossAxisAlignment: CrossAxisAlignment.start,
+        leading: avatar(Icons.set_meal, red),
+        title: Text(widget.hotel ? 'Fish sold' : 'Fish bought',
+            style: const TextStyle(fontWeight: FontWeight.w700)),
+        subtitle: Text(
+            '${names.join(', ')} \u2022 ${qty(sum(fs, 'quantity'))} kg',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis),
+        trailing: right(
+            inr(bill), red, '$owesLabel ${inr(fs.last['running_balance'])}'),
+        children: [
+          for (final e in fs)
+            line(
+                '${e['fish_name']}  ${qty(e['quantity'])} kg \u00d7 ${inr(e['rate'])}',
+                inr(e['amount'])),
+          const Divider(height: 16, color: Colors.black12),
+          line(widget.hotel ? 'Sale total' : 'Bill', inr(bill)),
+          if (!widget.hotel)
+            line('Paid now', inr(paid), col: moved ? green : null),
+          if (!widget.hotel) line('Pending from this bill', inr(pend)),
+          line('$owesLabel now', inr(fs.last['running_balance']), bold: true),
+        ]);
+  }
+
+  Widget dayBlock(String k, List es) {
+    final rows = <Widget>[];
+    var fs = <Map>[];
+    void flush() {
+      if (fs.isNotEmpty) {
+        rows.add(billRow(List<Map>.of(fs)));
+        fs = <Map>[];
+      }
+    }
+
+    for (final e in es) {
+      final m = e as Map;
+      if (isPay(m)) {
+        flush();
+        rows.add(payRow(m));
+      } else {
+        fs.add(m);
+      }
+    }
+    flush();
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+          padding: const EdgeInsets.fromLTRB(4, 10, 0, 6),
+          child: Text(dayLabel(k),
+              style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                  fontSize: 13,
+                  color: Colors.black54))),
+      Panel(
+          pad: EdgeInsets.zero,
+          child: ClipRRect(
+              borderRadius: BorderRadius.circular(20),
+              child: Theme(
+                  data: Theme.of(context)
+                      .copyWith(dividerColor: Colors.transparent),
+                  child: Column(children: [
+                    for (var i = 0; i < rows.length; i++) ...[
+                      if (i > 0)
+                        const Divider(
+                            height: 1, indent: 72, color: Colors.black12),
+                      rows[i],
+                    ]
+                  ])))),
+    ]);
   }
 
   @override
@@ -369,25 +480,12 @@ class _LP extends State<LedgerPage> {
                     child: Text(
                         'Showing ${niceDate(isoDate(r!.start))} to ${niceDate(isoDate(r!.end))}',
                         style: const TextStyle(color: Colors.black54))),
+              const Padding(
+                  padding: EdgeInsets.only(bottom: 4),
+                  child: Text('Tap a fish entry to see the details',
+                      style: TextStyle(color: Colors.black54, fontSize: 12))),
               if (es.isEmpty) const EmptyNote('No entries yet.'),
-              for (final k in keys)
-                Panel(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Row(children: [
-                        Expanded(
-                            child: Text(shortDate(k),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 16))),
-                        Text('Balance ${inr(g[k]!.last['running_balance'])}',
-                            style: const TextStyle(
-                                color: Colors.black54, fontSize: 12)),
-                      ]),
-                      const Divider(),
-                      for (final e in g[k]!) entry(e as Map),
-                    ])),
+              for (final k in keys) dayBlock(k, g[k]!),
             ]);
           }));
 }

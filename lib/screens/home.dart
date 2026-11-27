@@ -17,6 +17,7 @@ class HomePage extends StatefulWidget {
 
 class _HS extends State<HomePage> {
   Map? dash;
+  Map? today; // today's journal, used for purchase totals
   List hist = [];
   bool busy = true;
   String? err;
@@ -30,6 +31,8 @@ class _HS extends State<HomePage> {
   bool get openingDone =>
       jn != null &&
       (closed || stock.any((r) => r['opening_confirmed'] == true));
+
+  Map get purchaseTotals => M(M(today?['purchases'])['totals']);
 
   Map? get prevOpen {
     for (final h in hist) {
@@ -52,6 +55,12 @@ class _HS extends State<HomePage> {
     super.initState();
     Jobs.i.tick.addListener(_tick);
     DataCache.i.addListener(_cacheChanged);
+    final d0 = DataCache.i.peek('dashboard:$ds');
+    if (d0 is Map) dash = d0;
+    final h0 = DataCache.i.peek('history:6:0');
+    if (h0 is List) hist = h0;
+    final t0 = DataCache.i.peek('journal:$ds');
+    if (t0 is Map) today = t0;
     load();
   }
 
@@ -71,6 +80,8 @@ class _HS extends State<HomePage> {
 
     if (d is Map) dash = d;
     if (h is List) hist = h;
+    final t = DataCache.i.peek('journal:$ds');
+    if (t is Map) today = t;
 
     if (!mounted) return;
 
@@ -114,24 +125,44 @@ class _HS extends State<HomePage> {
         err = null;
       });
     try {
-      final d = await DataCache.i.cached(
+      final dF = DataCache.i.cached(
         'dashboard:$ds',
         () => Api.req('GET', '/api/v1/dashboard', q: {'business_date': ds}),
       );
-      final h = await DataCache.i.cached(
+      final hF = DataCache.i.cached(
         'history:6:0',
         () => fetch('/api/v1/history', q: {'limit': '6', 'offset': '0'}),
       );
-      dash = d as Map;
-      hist = h;
-      shop = (await Store.get('shop')) ?? '';
+      hF.ignore();
+      final sF = Store.get('shop');
+      dash = await dF as Map;
       err = null;
+      if (mounted) setState(() => busy = false); // draw now
+      _loadToday(); // not awaited
+      hist = await hF;
+      shop = (await sF) ?? '';
     } on ApiException catch (e) {
       err = e.message;
     }
     if (!mounted) return;
     setState(() => busy = false);
     _maybeResume();
+  }
+
+  Future<void> _loadToday() async {
+    if (jn == null) {
+      today = null;
+      return;
+    }
+    try {
+      today = await DataCache.i.cached(
+        'journal:$ds',
+        () => Api.req('GET', '/api/v1/journals/by-date/$ds'),
+      ) as Map;
+      if (mounted) setState(() {});
+    } on ApiException {
+      // keep the old value
+    }
   }
 
   /// After the phone closed the app, go back into the work screen once.
@@ -332,16 +363,29 @@ class _HS extends State<HomePage> {
                 1),
           ]),
           const SizedBox(height: 16),
-          if (openingDone && !closed && live.isNotEmpty)
+          if (jn != null &&
+              (today != null || (openingDone && !closed && live.isNotEmpty)))
             Panel(
                 child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                  const Sect('Stock now', Icons.inventory_2, teal),
-                  Wrap(children: [
-                    for (final r in live)
-                      Tile('${r['fish_name']}', kg(r['current_stock']))
-                  ]),
+                  if (today != null) ...[
+                    const Sect('Purchased today', Icons.shopping_basket, coral),
+                    Row(children: [
+                      Mini('Kg', qty(purchaseTotals['total_quantity']),
+                          col: coral),
+                      Mini('Amount', inr(purchaseTotals['total_amount']),
+                          col: coral),
+                    ]),
+                  ],
+                  if (openingDone && !closed && live.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    const Sect('Stock now', Icons.inventory_2, teal),
+                    Wrap(children: [
+                      for (final r in live)
+                        Tile('${r['fish_name']}', kg(r['current_stock']))
+                    ]),
+                  ],
                 ])),
           if (lc != null)
             Panel(

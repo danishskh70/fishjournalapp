@@ -29,6 +29,8 @@ class _WS extends State<WorkScreen> {
   void initState() {
     super.initState();
     Store.set('resume', '1');
+    final c0 = DataCache.i.peek('journal:${widget.date}');
+    if (c0 is Map) j = c0;
     Jobs.i.tick.addListener(_tick);
     DataCache.i.addListener(_cacheChanged);
     load();
@@ -128,6 +130,46 @@ class _WS extends State<WorkScreen> {
         body: body());
   }
 
+  /// Stock flow: fish across the top, steps down the side.
+  Widget stockTable() {
+    final rows = L(M(j!['stock'])['rows'])
+        .where((r) =>
+            nz(r['opening_quantity']) != 0 ||
+            nz(r['purchased']) != 0 ||
+            nz(r['hotel_sold']) != 0 ||
+            nz(r['current_stock']) != 0)
+        .toList();
+    if (rows.isEmpty) return const EmptyNote('No stock yet.');
+    List<String> line(String k) => [
+          for (final r in rows) qty(r[k]),
+          qty(sum(rows, k)),
+        ];
+    return LayoutBuilder(builder: (c, box) {
+      final need = 100.0 + 72.0 * (rows.length + 1);
+      final w = need > box.maxWidth ? need : box.maxWidth;
+      return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(
+              width: w,
+              child: tbl([
+                'kg',
+                for (final r in rows) '${r['fish_name']}',
+                'Total'
+              ], [
+                ['Opening', ...line('opening_quantity')],
+                ['+ Purchase', ...line('purchased')],
+                ['\u2212 Hotel sale', ...line('hotel_sold')],
+              ], foot: [
+                'Now',
+                ...line('current_stock')
+              ], flex: [
+                3,
+                for (final _ in rows) 2,
+                2
+              ])));
+    });
+  }
+
   Widget body() {
     if (busy && j == null)
       return const Center(child: CircularProgressIndicator());
@@ -223,10 +265,7 @@ class _WS extends State<WorkScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                   const Sect('Stock now', Icons.inventory_2, teal),
-                  Wrap(children: [
-                    for (final r in live)
-                      Tile('${r['fish_name']}', kg(r['current_stock']))
-                  ]),
+                  stockTable(),
                 ])),
         ]));
   }
