@@ -1,144 +1,232 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
+import '../core/page_physics.dart';
 import '../core/ui.dart';
 import 'pay.dart';
 
 class AccountsPage extends StatefulWidget {
   const AccountsPage({super.key});
+
   @override
   State<AccountsPage> createState() => _AP();
 }
 
 class _AP extends State<AccountsPage> {
   int v = 0;
+  late final PageController _accountsController;
+
+  @override
+  void initState() {
+    super.initState();
+    _accountsController = PageController(initialPage: accTab.value);
+    accTab.addListener(_onAccountTabChanged);
+  }
+
+  void _onAccountTabChanged() {
+    if (!_accountsController.hasClients) return;
+
+    final target = accTab.value;
+    final current =
+        _accountsController.page ?? _accountsController.initialPage.toDouble();
+
+    if (current.round() == target) return;
+
+    _accountsController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 400),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  void _onAccountPageChanged(int index) {
+    if (accTab.value != index) {
+      accTab.value = index;
+    }
+  }
+
+  @override
+  void dispose() {
+    accTab.removeListener(_onAccountTabChanged);
+    _accountsController.dispose();
+    super.dispose();
+  }
 
   Future<void> pay(bool hotel, {int? id}) async {
     await Navigator.push(
-        context,
-        MaterialPageRoute(
-            builder: (_) => PayScreen(hotel: hotel, partyId: id)));
+      context,
+      MaterialPageRoute(
+        builder: (_) => PayScreen(hotel: hotel, partyId: id),
+      ),
+    );
     if (mounted) setState(() => v++);
+  }
+
+  Widget _accountList(bool hotel) {
+    return Fut(
+      key: ValueKey('${hotel ? 'hotels' : 'suppliers'}-$v'),
+      cacheKey: 'accounts:${hotel ? 'hotels' : 'suppliers'}',
+      load: () => fetch(
+        hotel ? '/api/v1/accounts/hotels' : '/api/v1/accounts/suppliers',
+      ),
+      build: (c, data, re) {
+        final l = List.of(data as List)
+          ..sort(
+            (a, b) => nz(b['outstanding']).compareTo(nz(a['outstanding'])),
+          );
+        final totalAmt = sum(l, 'outstanding');
+
+        return RefreshIndicator(
+          onRefresh: re,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+            children: [
+              Grad(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      hotel ? 'Hotels owe you' : 'You owe suppliers',
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      inr(totalAmt),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              if (l.isEmpty)
+                EmptyNote(
+                  hotel
+                      ? 'No hotels yet. Add in Settings.'
+                      : 'No suppliers yet. Add in Settings.',
+                ),
+              for (final x in l)
+                Panel(
+                  onTap: () async {
+                    await Navigator.push(
+                      c,
+                      MaterialPageRoute(
+                        builder: (_) => LedgerPage(
+                          hotel: hotel,
+                          id: x['id'] as int,
+                          name: '${x['name']}',
+                        ),
+                      ),
+                    );
+                    if (mounted) setState(() => v++);
+                  },
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        backgroundColor: tint(hotel ? teal : coral),
+                        child: Icon(
+                          hotel ? Icons.hotel : Icons.local_shipping,
+                          color: hotel ? teal : coral,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '${x['name']}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 17,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        nz(x['outstanding']) > 0
+                            ? inr(x['outstanding'])
+                            : 'Clear',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          color: nz(x['outstanding']) > 0
+                              ? (hotel ? teal : coral)
+                              : Colors.black54,
+                        ),
+                      ),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
   Widget build(BuildContext c) => ValueListenableBuilder<int>(
-      valueListenable: accTab,
-      builder: (c, t, _) {
-        final hotel = t == 0;
-        return Scaffold(
+        valueListenable: accTab,
+        builder: (c, t, _) {
+          final hotel = t == 0;
+
+          return Scaffold(
             backgroundColor: Colors.transparent,
             floatingActionButton: FloatingActionButton.extended(
-                onPressed: () => pay(hotel),
-                icon: const Icon(Icons.add),
-                label: Text(hotel ? 'Hotel paid' : 'Pay supplier')),
-            body: Column(children: [
-              const Padding(
+              onPressed: () => pay(hotel),
+              icon: const Icon(Icons.add),
+              label: Text(hotel ? 'Hotel paid' : 'Pay supplier'),
+            ),
+            body: Column(
+              children: [
+                const Padding(
                   padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
                   child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text('Accounts',
-                          style: TextStyle(
-                              fontSize: 26, fontWeight: FontWeight.w800)))),
-              Padding(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Accounts',
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: SegmentedButton<int>(segments: const [
-                    ButtonSegment(
+                  child: SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(
                         value: 0,
                         label: Text('Hotels'),
-                        icon: Icon(Icons.hotel)),
-                    ButtonSegment(
+                        icon: Icon(Icons.hotel),
+                      ),
+                      ButtonSegment(
                         value: 1,
                         label: Text('Suppliers'),
-                        icon: Icon(Icons.local_shipping))
-                  ], selected: {
-                    t
-                  }, onSelectionChanged: (s) => accTab.value = s.first)),
-              const SizedBox(height: 8),
-              Expanded(
-                  child: Fut(
-                      key: ValueKey('$t-$v'),
-                      cacheKey: 'accounts:${hotel ? 'hotels' : 'suppliers'}',
-                      load: () => fetch(hotel
-                          ? '/api/v1/accounts/hotels'
-                          : '/api/v1/accounts/suppliers'),
-                      build: (c, data, re) {
-                        final l = List.of(data as List)
-                          ..sort((a, b) => nz(b['outstanding'])
-                              .compareTo(nz(a['outstanding'])));
-                        final totalAmt = sum(l, 'outstanding');
-                        return RefreshIndicator(
-                            onRefresh: re,
-                            child: ListView(
-                                padding:
-                                    const EdgeInsets.fromLTRB(16, 8, 16, 96),
-                                children: [
-                                  Grad(
-                                      child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                        Text(
-                                            hotel
-                                                ? 'Hotels owe you'
-                                                : 'You owe suppliers',
-                                            style: const TextStyle(
-                                                color: Colors.white70)),
-                                        const SizedBox(height: 4),
-                                        Text(inr(totalAmt),
-                                            style: const TextStyle(
-                                                color: Colors.white,
-                                                fontSize: 32,
-                                                fontWeight: FontWeight.w800)),
-                                      ])),
-                                  const SizedBox(height: 14),
-                                  if (l.isEmpty)
-                                    EmptyNote(hotel
-                                        ? 'No hotels yet. Add in Settings.'
-                                        : 'No suppliers yet. Add in Settings.'),
-                                  for (final x in l)
-                                    Panel(
-                                        onTap: () async {
-                                          await Navigator.push(
-                                              c,
-                                              MaterialPageRoute(
-                                                  builder: (_) => LedgerPage(
-                                                      hotel: hotel,
-                                                      id: x['id'] as int,
-                                                      name: '${x['name']}')));
-                                          if (mounted) setState(() => v++);
-                                        },
-                                        child: Row(children: [
-                                          CircleAvatar(
-                                              backgroundColor:
-                                                  tint(hotel ? teal : coral),
-                                              child: Icon(
-                                                  hotel
-                                                      ? Icons.hotel
-                                                      : Icons.local_shipping,
-                                                  color: hotel ? teal : coral)),
-                                          const SizedBox(width: 12),
-                                          Expanded(
-                                              child: Text('${x['name']}',
-                                                  style: const TextStyle(
-                                                      fontWeight:
-                                                          FontWeight.w700,
-                                                      fontSize: 17))),
-                                          Text(
-                                              nz(x['outstanding']) > 0
-                                                  ? inr(x['outstanding'])
-                                                  : 'Clear',
-                                              style: TextStyle(
-                                                  fontWeight: FontWeight.w800,
-                                                  color: nz(x['outstanding']) >
-                                                          0
-                                                      ? (hotel ? teal : coral)
-                                                      : Colors.black54)),
-                                          const Icon(Icons.chevron_right),
-                                        ])),
-                                ]));
-                      }))
-            ]));
-      });
+                        icon: Icon(Icons.local_shipping),
+                      ),
+                    ],
+                    selected: {t},
+                    onSelectionChanged: (s) => accTab.value = s.first,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: PageView(
+                    controller: _accountsController,
+                    physics: const OnePageScrollPhysics(),
+                    onPageChanged: _onAccountPageChanged,
+                    children: [
+                      _accountList(true),
+                      _accountList(false),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
 }
 
 class LedgerPage extends StatefulWidget {
