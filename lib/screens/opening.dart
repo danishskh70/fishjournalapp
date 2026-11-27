@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/ui.dart';
+import '../core/result.dart';
 
 /// Morning stock. Yesterday's closing is only a hint. Owner types what is really there.
 class OpeningScreen extends StatefulWidget {
@@ -15,7 +16,7 @@ class _OS extends State<OpeningScreen> {
   final cs = <int, TextEditingController>{};
   final prev = <int, num>{};
   final sel = <int>[];
-  bool ok = false, busy = false;
+  bool ok = false;
   String? err;
 
   @override
@@ -88,24 +89,28 @@ class _OS extends State<OpeningScreen> {
         return;
       }
     }
-    setState(() => busy = true);
-    try {
-      await Api.req('PUT', '/api/v1/journals/${widget.j['id']}/opening-stock',
-          body: {
-            'items': [
-              for (final f in fish)
-                {
-                  'fish_id': f['id'],
-                  'quantity':
-                      sel.contains(f['id']) ? '${n(cs[f['id']]!.text)}' : '0'
-                }
-            ]
-          });
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
-    }
-    if (mounted) setState(() => busy = false);
+    final saved = await runWithResult(
+      context,
+      action: () => Api.req(
+        'PUT',
+        '/api/v1/journals/${widget.j['id']}/opening-stock',
+        body: {
+          'items': [
+            for (final f in fish)
+              {
+                'fish_id': f['id'],
+                'quantity':
+                    sel.contains(f['id']) ? '${n(cs[f['id']]!.text)}' : '0'
+              }
+          ],
+        },
+      ),
+      working: 'Saving morning stock...',
+      okTitle: 'Morning stock saved',
+      retryable: true,
+    );
+
+    if (saved && mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -117,7 +122,7 @@ class _OS extends State<OpeningScreen> {
               child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                   child: FilledButton(
-                      onPressed: busy ? null : save,
+                      onPressed: save,
                       child: Text(sel.isEmpty
                           ? 'Start with no stock'
                           : 'Confirm morning stock')))),

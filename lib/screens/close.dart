@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/jobs.dart';
 import '../core/ui.dart';
+import '../core/result.dart';
 
 /// End of day on ONE screen: fish left, then cash and UPI. Blank is never zero.
 /// Pops true when the day is closed.
@@ -81,16 +82,20 @@ class _CL extends State<CloseScreen> {
   }
 
   Future<void> close() async {
-    setState(() => busy = true);
-    try {
-      await Api.req('POST', '/api/v1/journals/${widget.j['id']}/close',
-          body: body());
-      if (mounted) Navigator.pop(context, true);
-      return;
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
-    }
-    if (mounted) setState(() => busy = false);
+    final closed = await runWithResult(
+      context,
+      action: () => Api.req(
+        'POST',
+        '/api/v1/journals/${widget.j['id']}/close',
+        body: body(),
+      ),
+      working: 'Closing your business day...',
+      okTitle: 'Day closed successfully',
+      retryable: false,
+      failHint: 'Check the journal status before attempting to close again.',
+    );
+
+    if (closed && mounted) Navigator.pop(context, true);
   }
 
   void zeroAll() {

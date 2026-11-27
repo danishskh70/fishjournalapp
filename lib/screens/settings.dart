@@ -6,6 +6,7 @@ import '../core/jobs.dart';
 import '../core/store.dart';
 import '../core/ui.dart';
 import '../core/update.dart';
+import '../core/result.dart';
 
 class SettingsPage extends StatelessWidget {
   final VoidCallback onLogout;
@@ -154,24 +155,26 @@ class PwSheet extends StatefulWidget {
 
 class _PW extends State<PwSheet> {
   final a = TextEditingController(), b = TextEditingController();
-  bool busy = false;
   Future<void> save() async {
     if (b.text.length < 10) {
       toast(context, 'New password needs at least 10 characters');
       return;
     }
-    setState(() => busy = true);
-    try {
-      await Api.req('POST', '/api/v1/auth/change-password',
-          body: {'current_password': a.text, 'new_password': b.text});
-      if (mounted) {
-        Navigator.pop(context);
-        toast(context, 'Password changed');
-      }
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
-    }
-    if (mounted) setState(() => busy = false);
+    final changed = await runWithResult(
+      context,
+      action: () => Api.req(
+        'POST',
+        '/api/v1/auth/change-password',
+        body: {'current_password': a.text, 'new_password': b.text},
+      ),
+      working: 'Changing password...',
+      okTitle: 'Password changed',
+      retryable: false,
+      failHint:
+          'If the request failed unexpectedly, try logging in with your new password before attempting another change.',
+    );
+
+    if (changed && mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -191,7 +194,7 @@ class _PW extends State<PwSheet> {
             decoration: const InputDecoration(
                 labelText: 'New password (10+ characters)')),
         const SizedBox(height: 16),
-        FilledButton(onPressed: busy ? null : save, child: const Text('Save')),
+        FilledButton(onPressed: save, child: const Text('Save')),
       ]);
 }
 
@@ -303,7 +306,6 @@ class _AM extends State<AddMaster> {
   final name = TextEditingController(),
       phone = TextEditingController(),
       bal = TextEditingController();
-  bool busy = false;
   bool get party => widget.kind != 'fish';
 
   Future<void> save() async {
@@ -311,22 +313,27 @@ class _AM extends State<AddMaster> {
       toast(context, 'Type a name');
       return;
     }
-    setState(() => busy = true);
-    try {
-      final body = <String, dynamic>{'name': name.text.trim()};
-      if (party) {
-        if (phone.text.trim().isNotEmpty) body['phone'] = phone.text.trim();
-        if (n(bal.text) > 0) {
-          body['opening_balance'] = '${n(bal.text)}';
-          body['opening_balance_date'] = isoDate(DateTime.now());
-        }
+
+    final body = <String, dynamic>{'name': name.text.trim()};
+    if (party) {
+      if (phone.text.trim().isNotEmpty) body['phone'] = phone.text.trim();
+      if (n(bal.text) > 0) {
+        body['opening_balance'] = '${n(bal.text)}';
+        body['opening_balance_date'] = isoDate(DateTime.now());
       }
-      await Api.req('POST', '/api/v1/${widget.kind}', body: body);
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
     }
-    if (mounted) setState(() => busy = false);
+
+    final added = await runWithResult(
+      context,
+      action: () => Api.req('POST', '/api/v1/${widget.kind}', body: body),
+      working: 'Adding...',
+      okTitle: 'Added successfully',
+      retryable: false,
+      failHint:
+          'Check the list first. If the item is already there, do not add it again.',
+    );
+
+    if (added && mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -357,7 +364,7 @@ class _AM extends State<AddMaster> {
                   : 'You already owe (₹, optional)'),
         ],
         const SizedBox(height: 16),
-        FilledButton(onPressed: busy ? null : save, child: const Text('Save')),
+        FilledButton(onPressed: save, child: const Text('Save')),
       ]);
 }
 

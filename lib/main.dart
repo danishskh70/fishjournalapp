@@ -59,6 +59,26 @@ class Shell extends StatefulWidget {
 
 class _ShellS extends State<Shell> {
   late final List<Widget> _pages;
+  double _swipeDistance = 0;
+
+  void _onSwipeUpdate(DragUpdateDetails details) {
+    _swipeDistance += details.primaryDelta ?? 0;
+  }
+
+  void _onSwipeEnd(DragEndDetails details) {
+    final distance = _swipeDistance;
+    final velocity = details.primaryVelocity ?? 0;
+    _swipeDistance = 0;
+
+    final movement = distance.abs() >= 70 ? distance : velocity;
+    if (movement.abs() < 450 && distance.abs() < 70) return;
+
+    if (movement < 0 && shellTab.value < 3) {
+      shellTab.value++;
+    } else if (movement > 0 && shellTab.value > 0) {
+      shellTab.value--;
+    }
+  }
 
   @override
   void initState() {
@@ -85,9 +105,16 @@ class _ShellS extends State<Shell> {
       valueListenable: shellTab,
       builder: (c, i, _) => Scaffold(
           body: SafeArea(
-            child: IndexedStack(
-              index: i,
-              children: _pages,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onHorizontalDragStart: (_) => _swipeDistance = 0,
+              onHorizontalDragUpdate: _onSwipeUpdate,
+              onHorizontalDragEnd: _onSwipeEnd,
+              onHorizontalDragCancel: () => _swipeDistance = 0,
+              child: IndexedStack(
+                index: i,
+                children: _pages,
+              ),
             ),
           ),
           bottomNavigationBar: NavigationBar(

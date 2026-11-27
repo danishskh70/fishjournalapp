@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../core/api.dart';
 import '../core/ui.dart';
+import '../core/result.dart';
 
 /// Payment from a hotel (received) or to a supplier (paid).
 /// Shows a "payment saved" screen at the end. Done goes back to where the owner came from.
@@ -20,9 +21,8 @@ class _PS extends State<PayScreen> {
   String mode = 'cash';
   DateTime? dt;
   final a = TextEditingController();
-  bool ready = false, busy = false;
+  bool ready = false;
   String? loadErr;
-  Map? done;
 
   String get pk => widget.hotel ? 'hotel_id' : 'supplier_id';
   String get base =>
@@ -79,90 +79,84 @@ class _PS extends State<PayScreen> {
 
   Future<void> save() async {
     final amt = n(a.text);
+
     if (p == null) {
       toast(context, 'Choose the $who');
       return;
     }
+
     if (amt <= 0) {
       toast(context, 'Type the amount');
       return;
     }
+
     if (widget.existing == null && amt > out + 0.001) {
       toast(context, 'More than pending ${inr(out)}. Cannot save.');
       return;
     }
-    setState(() => busy = true);
-    try {
-      final body = <String, dynamic>{
-        pk: p,
-        'amount': fmt(amt),
-        'payment_mode': mode,
-        if (dt != null) 'payment_date': isoDate(dt!)
-      };
-      final ex = widget.existing;
-      if (ex == null) {
-        await Api.req('POST', base, body: body);
-      } else {
-        await Api.req('PUT', '$base/${ex['id']}', body: body);
-      }
-      final name = '${party?['name'] ?? ''}';
-      var left = 0.0;
-      try {
-        final l = await fetch(listPath);
-        for (final x in l) {
-          if (x['id'] == p) left = nz(x['outstanding']).toDouble();
-        }
-      } catch (_) {}
-      if (mounted)
-        setState(() => done = {
-              'name': name,
-              'amount': amt,
-              'mode': mode,
-              'left': left,
-              'date': dt == null ? 'Today' : niceDate(isoDate(dt!))
-            });
-    } on ApiException catch (e) {
-      if (mounted) toast(context, e.message);
-    }
-    if (mounted) setState(() => busy = false);
-  }
 
-  Widget doneView() => Center(
-      child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                    color: tint(teal, 30), shape: BoxShape.circle),
-                child: const Icon(Icons.check, size: 56, color: teal)),
-            const SizedBox(height: 20),
-            const Text('Payment saved',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 8),
-            Text(inr(done!['amount']),
-                style: const TextStyle(
-                    fontSize: 36, fontWeight: FontWeight.w800, color: teal)),
-            const SizedBox(height: 8),
-            Text('${widget.hotel ? 'From' : 'To'} ${done!['name']}',
-                style: const TextStyle(fontSize: 16)),
-            Text('${'${done!['mode']}'.toUpperCase()} • ${done!['date']}',
-                style: const TextStyle(color: Colors.black54)),
-            const SizedBox(height: 16),
-            Panel(
-                child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                  Text(widget.hotel ? 'Hotel still owes' : 'You still owe'),
-                  Text(inr(done!['left']),
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 18))
-                ])),
-            const SizedBox(height: 8),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Done')),
-          ])));
+    final body = <String, dynamic>{
+      pk: p,
+      'amount': fmt(amt),
+      'payment_mode': mode,
+      if (dt != null) 'payment_date': isoDate(dt!),
+    };
+
+    final ex = widget.existing;
+    final name = '${party?['name'] ?? ''}';
+    final paymentDate = dt == null ? 'Today' : niceDate(isoDate(dt!));
+
+    final saved = await runWithResult(
+      context,
+      action: () async {
+        if (ex == null) {
+          await Api.req('POST', base, body: body);
+        } else {
+          await Api.req('PUT', '$base/${ex['id']}', body: body);
+        }
+
+        var left = 0.0;
+        try {
+          final l = await fetch(listPath);
+          for (final x in l) {
+            if (x['id'] == p) {
+              left = nz(x['outstanding']).toDouble();
+            }
+          }
+        } catch (_) {}
+
+        return {
+          'name': name,
+          'amount': amt,
+          'mode': mode,
+          'left': left,
+          'date': paymentDate,
+        };
+      },
+      working: ex == null ? 'Saving payment...' : 'Updating payment...',
+      okTitle: ex == null ? 'Payment saved' : 'Payment updated',
+      autoClose: false,
+      retryable: ex != null,
+      failHint: ex == null
+          ? 'Do not record this payment again yet. Check the payment ledger first. If it is already there, do not save it again.'
+          : null,
+      okLines: (result) {
+        final d = result as Map;
+        return [
+          inr(d['amount']),
+          '${widget.hotel ? 'From' : 'To'} ${d['name']}',
+          '${'${d['mode']}'.toUpperCase()} • ${d['date']}',
+          widget.hotel
+              ? 'Hotel still owes ${inr(d['left'])}'
+              : 'You still owe ${inr(d['left'])}',
+        ];
+      },
+    );
+
+    if (saved && mounted) {
+      Navigator.pop(context, true);
+    }
+  }
 
   Widget form() => ListView(padding: const EdgeInsets.all(16), children: [
         if (p == null) ...[
@@ -251,13 +245,12 @@ class _PS extends State<PayScreen> {
           title: Text(widget.existing != null
               ? 'Edit payment'
               : (widget.hotel ? 'Hotel paid' : 'Pay supplier'))),
-      bottomNavigationBar: ready && done == null && p != null
+      bottomNavigationBar: ready && p != null
           ? SafeArea(
               child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                   child: FilledButton(
-                      onPressed: busy ? null : save,
-                      child: Text(busy ? 'Saving' : 'Save payment'))))
+                      onPressed: save, child: const Text('Save payment'))))
           : null,
       body: !ready
           ? const Center(child: CircularProgressIndicator())
@@ -275,7 +268,5 @@ class _PS extends State<PayScreen> {
                             },
                             child: const Text('Retry'))
                       ])))
-              : done != null
-                  ? doneView()
-                  : form());
+              : form());
 }

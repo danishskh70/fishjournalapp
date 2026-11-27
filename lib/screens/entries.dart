@@ -3,6 +3,7 @@ import '../core/api.dart';
 import '../core/jobs.dart';
 import '../core/ui.dart';
 import 'pay.dart';
+import '../core/result.dart';
 
 /// Today's entries with edit and delete (only while the day is open).
 class TodayEntries extends StatefulWidget {
@@ -33,12 +34,17 @@ class _TE extends State<TodayEntries> {
 
   Future<void> del(String path, Map e, String what) async {
     if (!await confirm(context, 'Delete this $what?')) return;
-    try {
-      await Api.req('DELETE', '$path/${e['id']}');
-      if (mounted) setState(() => v++);
-    } on ApiException catch (x) {
-      if (mounted) toast(context, x.message);
-    }
+
+    final deleted = await runWithResult(
+      context,
+      action: () => Api.req('DELETE', '$path/${e['id']}'),
+      working: 'Deleting $what...',
+      okTitle: '${what[0].toUpperCase()}${what.substring(1)} deleted',
+      retryable: false,
+      failHint: 'Check the entries list before trying this deletion again.',
+    );
+
+    if (deleted && mounted) setState(() => v++);
   }
 
   Future<void> editPurchase(Map e) async {
@@ -192,29 +198,37 @@ class _EP extends State<EditPurchase> {
 
   Future<void> save() async {
     final amount = r2(n(q.text) * n(r.text));
+
     if (n(q.text) <= 0 || n(r.text) <= 0) {
       toast(context, 'Type kg and rate');
       return;
     }
+
     if (n(p.text) < 0 || n(p.text) > amount + 0.001) {
       toast(context, 'Paid cannot be more than ₹${fmt(amount)}');
       return;
     }
-    setState(() => busy = true);
-    try {
-      await Api.req('PUT', '/api/v1/purchases/${widget.e['id']}', body: {
-        'supplier_id': widget.e['supplier_id'],
-        'fish_id': widget.e['fish_id'],
-        'quantity': '${n(q.text)}',
-        'rate': '${n(r.text)}',
-        'paid_now': '${n(p.text)}',
-        if (n(p.text) > 0) 'payment_mode': mode,
-      });
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (x) {
-      if (mounted) toast(context, x.message);
-    }
-    if (mounted) setState(() => busy = false);
+
+    final saved = await runWithResult(
+      context,
+      action: () => Api.req(
+        'PUT',
+        '/api/v1/purchases/${widget.e['id']}',
+        body: {
+          'supplier_id': widget.e['supplier_id'],
+          'fish_id': widget.e['fish_id'],
+          'quantity': '${n(q.text)}',
+          'rate': '${n(r.text)}',
+          'paid_now': '${n(p.text)}',
+          if (n(p.text) > 0) 'payment_mode': mode,
+        },
+      ),
+      working: 'Updating purchase...',
+      okTitle: 'Purchase updated',
+      retryable: true,
+    );
+
+    if (saved && mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -253,26 +267,31 @@ class EditSale extends StatefulWidget {
 class _ES extends State<EditSale> {
   late final q = TextEditingController(text: qty(widget.e['quantity']));
   late final r = TextEditingController(text: fmt(nz(widget.e['rate'])));
-  bool busy = false;
 
   Future<void> save() async {
     if (n(q.text) <= 0 || n(r.text) <= 0) {
       toast(context, 'Type kg and rate');
       return;
     }
-    setState(() => busy = true);
-    try {
-      await Api.req('PUT', '/api/v1/hotel-sales/${widget.e['id']}', body: {
-        'hotel_id': widget.e['hotel_id'],
-        'fish_id': widget.e['fish_id'],
-        'quantity': '${n(q.text)}',
-        'rate': '${n(r.text)}',
-      });
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (x) {
-      if (mounted) toast(context, x.message);
-    }
-    if (mounted) setState(() => busy = false);
+
+    final saved = await runWithResult(
+      context,
+      action: () => Api.req(
+        'PUT',
+        '/api/v1/hotel-sales/${widget.e['id']}',
+        body: {
+          'hotel_id': widget.e['hotel_id'],
+          'fish_id': widget.e['fish_id'],
+          'quantity': '${n(q.text)}',
+          'rate': '${n(r.text)}',
+        },
+      ),
+      working: 'Updating sale...',
+      okTitle: 'Sale updated',
+      retryable: true,
+    );
+
+    if (saved && mounted) Navigator.pop(context, true);
   }
 
   @override
@@ -285,7 +304,6 @@ class _ES extends State<EditSale> {
         const SizedBox(height: 12),
         numField(r, 'Rate per kg (₹)'),
         const SizedBox(height: 16),
-        FilledButton(
-            onPressed: busy ? null : save, child: const Text('Save changes')),
+        FilledButton(onPressed: save, child: const Text('Save changes')),
       ]);
 }

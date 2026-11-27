@@ -3,6 +3,7 @@ import '../core/api.dart';
 import '../core/jobs.dart';
 import '../core/store.dart';
 import '../core/ui.dart';
+import '../core/result.dart';
 
 /// Multi-fish entry for a purchase (from supplier) or a hotel sale.
 /// 0 choose party -> 1 tick fish -> 2 kg and rate for all ticked fish on one screen -> 3 review and save.
@@ -178,14 +179,18 @@ class _EF extends State<EntryFlow> {
   Future<void> save() async {
     final t = total;
     var left = r2(n(paid.text));
+
     if (!widget.sale && (left < 0 || left > t + 0.001)) {
       toast(context, 'Paid cannot be more than total ₹${fmt(t)}');
       return;
     }
+
     final items = <Map<String, dynamic>>[];
+
     for (final id in sel) {
       final a = amt(id);
       final rateTxt = fmt(effRate(id));
+
       final it = <String, dynamic>{
         'fish_id': id,
         'fish': fishName(id),
@@ -193,6 +198,7 @@ class _EF extends State<EntryFlow> {
         'st': 'todo',
         'err': ''
       };
+
       if (widget.sale) {
         final def = hotelRates[id];
         it['rate'] = (def != null && n(def) == effRate(id)) ? null : rateTxt;
@@ -203,9 +209,12 @@ class _EF extends State<EntryFlow> {
         it['paid'] = fmt(pay);
         it['mode'] = pay > 0 ? mode : null;
       }
+
       items.add(it);
     }
-    await Jobs.i.add(<String, dynamic>{
+
+    // Create this once so retries use the same job ID.
+    final job = <String, dynamic>{
       'id': DateTime.now().microsecondsSinceEpoch.toString(),
       'kind': widget.sale ? 'sale' : 'purchase',
       'journal_id': widget.journalId,
@@ -214,14 +223,24 @@ class _EF extends State<EntryFlow> {
       'status': 'waiting',
       'note': '',
       'items': items,
-    });
+    };
+
+    final saved = await runWithResult(
+      context,
+      action: () => Jobs.i.add(job),
+      working: 'Saving $what...',
+      okTitle: '$what saved on this phone',
+      okLines: (_) => [
+        'Your entry is safely queued.',
+        'It will sync in the background.',
+      ],
+    );
+
     if (!mounted) return;
-    Navigator.pop(context, true);
-    msgKey.currentState?.showSnackBar(SnackBar(
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-        content: Text(
-            'Saving $what for ${party!['name']} in background. You can keep working.')));
+
+    if (saved) {
+      Navigator.pop(context, true);
+    }
   }
 
   // ---------- stages ----------

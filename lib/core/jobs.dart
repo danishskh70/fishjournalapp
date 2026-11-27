@@ -44,7 +44,14 @@ class Jobs extends ChangeNotifier {
   Future<void> _save() => Store.set('jobs', jsonEncode(list));
 
   Future<void> add(Map<String, dynamic> job) async {
-    list.add(job);
+    final id = job['id'];
+
+    // A retry must not insert the same job twice.
+    if (!list.any((x) => x['id'] == id)) {
+      list.add(job);
+    }
+
+    // Always retry saving locally, even if the job was already in memory.
     await _save();
     notifyListeners();
     kick();
